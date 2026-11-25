@@ -1000,39 +1000,32 @@ private fun drawStageEnvironment(
         )
     }
 
+    // Plateia em silhuetas individuais: movimento discreto e dessincronizado,
+    // sem a coreografia repetitiva de braços levantados.
     val crowdColor = Color(0xEE090510)
-    val crowdFreq = when {
-        isStarPower -> 10.5f
-        highEnergy -> 8.0f
-        crowdDanger -> 2.4f
-        else -> 5.0f
+    val crowdCount = (width / 24f).toInt().coerceIn(12, 64)
+    val crowdStep = width / crowdCount
+    for (index in 0 until crowdCount) {
+        val phase = index * 1.731f
+        val bob = sin(timeSec * (1.25f + (index % 4) * 0.13f) + phase) * 2.2f
+        val headRadius = 4.2f + (index % 3) * 0.8f
+        val personX = (index + 0.5f) * crowdStep
+        val shoulderY = height - 13f + bob
+        val torsoWidth = 12f + (index % 4) * 1.8f
+        val torsoHeight = 19f + (index % 3) * 3f
+
+        // Tronco e ombros com pequenas variações individuais de altura/largura.
+        drawScope.drawRoundRect(
+            color = crowdColor,
+            topLeft = Offset(personX - torsoWidth * 0.5f, shoulderY),
+            size = Size(torsoWidth, torsoHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(torsoWidth * 0.42f, torsoWidth * 0.42f)
+        )
+        drawScope.drawCircle(
+            color = crowdColor,
+            radius = headRadius,
+            center = Offset(personX + sin(phase) * 1.5f, shoulderY - headRadius * 1.45f)
+        )
     }
-    val crowdAmp = when {
-        isStarPower -> 14f
-        highEnergy -> 10f
-        crowdDanger -> 3f
-        else -> 7f
-    }
-    val armsOffset = when {
-        isStarPower -> 34f
-        highEnergy -> 26f
-        crowdDanger -> 10f
-        else -> 20f
-    }
-    val crowdPath = Path().apply {
-        moveTo(0f, height)
-        for (cx in 0..(width.toInt()) step 34) {
-            val crowdBob = sin(timeSec * crowdFreq + cx * 0.08f) * crowdAmp
-            val cy = (if (crowdDanger) height - 18f else height - 28f) + crowdBob
-            lineTo(cx.toFloat(), cy)
-            if (cx % 68 == 0) {
-                lineTo(cx.toFloat() - 5f, cy - armsOffset)
-                lineTo(cx.toFloat() + 3f, cy - armsOffset * 0.72f)
-                lineTo(cx.toFloat() + 9f, cy - armsOffset * 1.06f)
-            }
-        }
-        lineTo(width, height)
-        close()
-    }
-    drawScope.drawPath(crowdPath, color = crowdColor, style = Fill)
+}
 }
