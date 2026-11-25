@@ -4,11 +4,14 @@ on:
   push:
     branches:
       - main
+      - fix/app2-functional-corrections-2026-11-25
     paths:
       - "app/**"
       - "gradle/**"
       - "*.gradle*"
       - "settings.gradle.kts"
+      - "firestore.rules"
+      - "firebase.json"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
