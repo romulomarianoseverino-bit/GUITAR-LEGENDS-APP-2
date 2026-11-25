@@ -557,9 +557,6 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 for (lane in 0 until numLanes) {
-                    val color = LaneColors[lane]
-                    val isPressed = activeFretLanes.contains(lane)
-
                     // Área de toque invisível sobre o receptor já desenhado na pista.
                     // O Canvas fornece o visual; esta camada fornece somente a entrada tátil.
                     Surface(
