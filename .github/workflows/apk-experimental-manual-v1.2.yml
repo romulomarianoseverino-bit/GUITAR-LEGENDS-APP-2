@@ -94,8 +94,8 @@ jobs:
           sha256sum experimental-output/Guitar-Legends-APP-2-BASELINE-EXPERIMENTAL.apk > experimental-output/SHA256SUMS.txt
           {
             echo "Tipo: APK EXPERIMENTAL — não é release"
-            echo "Base APP-2: $base"
-            echo "Branch: $branch"
+            echo "Base APP-2: 5f09853a20a75b1e5b363ce7b9a5109be54f49ab"
+            echo "Branch: exp/app2-baseline-apk-2026-11-24"
             echo "Commit compilado: $(git rev-parse HEAD)"
             echo "Testes automatizados: ${{ steps.tests.outcome }}"
             echo "Login, playlists e multiplayer ainda exigem validação manual em aparelho."
