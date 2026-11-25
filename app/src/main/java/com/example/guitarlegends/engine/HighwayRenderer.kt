@@ -1028,4 +1028,3 @@ private fun drawStageEnvironment(
         )
     }
 }
-}

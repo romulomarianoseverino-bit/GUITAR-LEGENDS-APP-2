@@ -31,10 +31,12 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
@@ -50,6 +52,7 @@ import com.example.guitarlegends.model.MultiplayerMode
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.GameScreen
 import com.example.guitarlegends.viewmodel.GameViewModel
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -87,6 +90,32 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val numLanes = difficulty.lanesUsed
     val strikeEnabled = mpRoom?.strikeEnabled ?: localStrikeEnabled
     val isDualMultiplayer = mpRoom != null || isLocalMultiplayerMatch
+
+    // Coordenadas da pista e associação dos dedos aos receptores reais do Canvas.
+    var gameplayCanvasSize by remember { mutableStateOf(IntSize.Zero) }
+    val activeFretPointers = remember { mutableMapOf<Int, Int>() }
+
+    fun laneForTouch(x: Float, y: Float): Int? {
+        val width = gameplayCanvasSize.width.toFloat()
+        val height = gameplayCanvasSize.height.toFloat()
+        if (width <= 0f || height <= 0f) return null
+
+        val strikeY = height * if (isDualMultiplayer) 0.80f else 0.82f
+        if (abs(y - strikeY) > maxOf(height * 0.085f, 72f)) return null
+
+        // Mesma geometria usada em HighwayRenderer.drawHighway/drawDualMultiplayerHighways.
+        val highwayCenterX = width * if (isDualMultiplayer) 0.275f else 0.50f
+        val highwayWidth = if (isDualMultiplayer) {
+            (width * 0.34f).coerceIn(210f, 360f)
+        } else {
+            (width * 0.46f).coerceIn(310f, 540f)
+        }
+        val leftEdge = highwayCenterX - highwayWidth * 0.5f
+        if (x < leftEdge || x >= leftEdge + highwayWidth) return null
+
+        val laneWidth = highwayWidth / numLanes
+        return ((x - leftEdge) / laneWidth).toInt().coerceIn(0, numLanes - 1)
+    }
 
     val selfUid = viewModel.currentMultiplayerUid()
     val partnerParticipant = mpParticipants.firstOrNull { it.userId != selfUid }
@@ -180,6 +209,33 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
+                .onSizeChanged { gameplayCanvasSize = it }
+                .pointerInteropFilter { motionEvent ->
+                    val actionIndex = motionEvent.actionIndex
+                    when (motionEvent.actionMasked) {
+                        MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                            val pointerId = motionEvent.getPointerId(actionIndex)
+                            val lane = laneForTouch(motionEvent.getX(actionIndex), motionEvent.getY(actionIndex))
+                            if (lane != null) {
+                                activeFretPointers[pointerId] = lane
+                                viewModel.onFretDown(lane)
+                            }
+                            lane != null || activeFretPointers.isNotEmpty()
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                            val pointerId = motionEvent.getPointerId(actionIndex)
+                            activeFretPointers.remove(pointerId)?.let(viewModel::onFretUp)
+                            activeFretPointers.isNotEmpty()
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            activeFretPointers.values.toSet().forEach(viewModel::onFretUp)
+                            activeFretPointers.clear()
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> activeFretPointers.isNotEmpty()
+                        else -> activeFretPointers.isNotEmpty()
+                    }
+                }
                 .testTag(if (isDualMultiplayer) "multiplayer_dual_highways_canvas" else "single_highway_canvas")
         ) {
             val selectedTheme = viewModel.highwayThemes.find { it.id == stats.selectedHighwayThemeId }
@@ -538,63 +594,23 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             // A mecânica interna de desempenho continua ativa para pontuação e regras do jogo.
         }
 
-        // Receptores de toque compactos, circulares e centralizados na base da pista.
-        // A área de toque acompanha cada receptor; não há painéis ovais ou caixas duplicadas.
-        Box(
-            modifier = Modifier
-                .align(if (isDualMultiplayer) Alignment.BottomStart else Alignment.BottomCenter)
-                .padding(
-                    start = if (isDualMultiplayer) 16.dp else 0.dp,
-                    bottom = 10.dp
-                )
-                .fillMaxWidth(if (isDualMultiplayer) 0.56f else 0.80f)
-                .height(68.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically
+        // A entrada dos receptores é tratada diretamente sobre o Canvas, usando
+        // as mesmas coordenadas e a mesma quantidade de lanes do desenho da pista.
+        // A palheta fica separada, fora da área dos receptores, sem sobreposição.
+        if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
+            Button(
+                onClick = { viewModel.onStrumBar() },
+                colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 12.dp)
+                    .width(78.dp)
+                    .height(48.dp)
+                    .testTag("strum_bar_button")
             ) {
-                for (lane in 0 until numLanes) {
-                    // Área de toque invisível sobre o receptor já desenhado na pista.
-                    // O Canvas fornece o visual; esta camada fornece somente a entrada tátil.
-                    Surface(
-                        modifier = Modifier
-                            .size(58.dp)
-                            .testTag("fret_touch_button_$lane")
-                            .pointerInteropFilter { motionEvent ->
-                                when (motionEvent.actionMasked) {
-                                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                                        viewModel.onFretDown(lane)
-                                        true
-                                    }
-                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                                        viewModel.onFretUp(lane)
-                                        true
-                                    }
-                                    else -> false
-                                }
-                            },
-                        color = Color.Transparent,
-                        border = null,
-                        shape = CircleShape
-                    ) { }
-                }
-
-                if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
-                    Button(
-                        onClick = { viewModel.onStrumBar() },
-                        colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .width(78.dp)
-                            .height(54.dp)
-                            .testTag("strum_bar_button")
-                    ) {
-                        Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
-                    }
-                }
+                Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
             }
         }
 
