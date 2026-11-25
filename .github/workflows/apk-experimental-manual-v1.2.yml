@@ -81,6 +81,8 @@ jobs:
           mkdir -p experimental-output
           cp "$APK" experimental-output/Guitar-Legends-APP-2-BASELINE-EXPERIMENTAL.apk
           apksigner verify --print-certs experimental-output/Guitar-Legends-APP-2-BASELINE-EXPERIMENTAL.apk > experimental-output/SIGNATURE.txt
+          echo "Certificado encontrado no APK:"
+          cat experimental-output/SIGNATURE.txt
           EXPECTED='3D:02:6D:2A:62:E1:B4:E8:DD:31:9B:05:6C:1C:03:CD:77:DC:D3:4F:E7:FC:1B:CF:2D:A6:9E:67:01:55:8F:E9'
           grep -Fq "$EXPECTED" experimental-output/SIGNATURE.txt || {
             echo "::error::A assinatura do APK não corresponde à chave permanente da versão 1.2."
