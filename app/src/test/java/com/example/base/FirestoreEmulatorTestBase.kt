@@ -37,7 +37,7 @@ abstract class FirestoreEmulatorTestBase {
         databaseId = if (resId != 0) context.getString(resId) else "demo-database"
 
         val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            val newApp = FirebaseApp.initializeApp(
+            FirebaseApp.initializeApp(
                 context,
                 FirebaseOptions.Builder()
                     .setApplicationId("com.aistudio.applet.kpfcic")
@@ -45,21 +45,20 @@ abstract class FirestoreEmulatorTestBase {
                     .setApiKey("fake-api-key-for-emulator")
                     .build()
             )
-            val newFirestore = FirebaseFirestore.getInstance(newApp, databaseId)
-            newFirestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
-            newFirestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
-                .build()
-
-            val newAuth = FirebaseAuth.getInstance(newApp)
-            newAuth.useEmulator(EMULATOR_HOST, AUTH_PORT)
-            newApp
         } else {
             FirebaseApp.getInstance()
         }
 
+        // O google-services.json inicializa automaticamente o FirebaseApp em alguns testes.
+        // Mesmo nesse caso, Auth e Firestore precisam apontar para os emuladores antes do primeiro uso.
         firestore = FirebaseFirestore.getInstance(app, databaseId)
+        firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+        firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
+            .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
+            .build()
+
         auth = FirebaseAuth.getInstance(app)
+        auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
     }
 
     @After
