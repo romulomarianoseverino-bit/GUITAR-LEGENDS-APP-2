@@ -16,6 +16,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.security.MessageDigest
 
 /**
  * Repositório central de gerenciamento e persistência da Biblioteca Musical.
@@ -45,19 +46,47 @@ class MusicLibraryRepository(private val context: Context) {
     suspend fun loadAllTracks(): List<Track> = withContext(Dispatchers.IO) {
         val importedTracks = loadImportedTracksFromManifest()
         val verifiedImported = mutableListOf<Track>()
+        val fingerprintByTrackId = mutableMapOf<String, String>()
+        val canonicalIdByDuplicateId = mutableMapOf<String, String>()
+        val duplicateFilesToDelete = mutableListOf<File>()
 
         for (track in importedTracks) {
             val uriStr = track.uriString
-            if (!uriStr.isNullOrBlank()) {
-                val file = File(uriStr)
-                if (file.exists() && file.length() > 0L) {
-                    verifiedImported.add(track)
+            if (uriStr.isNullOrBlank()) continue
+            val file = File(uriStr)
+            if (!file.exists() || file.length() <= 0L) continue
+
+            val fingerprint = runCatching { sha256(file) }.getOrNull()
+            val duplicate = fingerprint?.let { hash ->
+                verifiedImported.firstOrNull { existing ->
+                    fingerprintByTrackId[existing.id] == hash
                 }
+            }
+
+            if (duplicate != null) {
+                canonicalIdByDuplicateId[track.id] = duplicate.id
+                duplicateFilesToDelete.add(file)
+            } else {
+                verifiedImported.add(track)
+                if (fingerprint != null) fingerprintByTrackId[track.id] = fingerprint
             }
         }
 
         if (verifiedImported.size != importedTracks.size) {
-            saveManifest(verifiedImported)
+            val saved = saveManifest(verifiedImported)
+            if (saved.isSuccess) {
+                duplicateFilesToDelete.forEach { runCatching { it.delete() } }
+                if (canonicalIdByDuplicateId.isNotEmpty()) {
+                    val repairedPlaylists = loadPlaylistsInternal().map { playlist ->
+                        playlist.copy(
+                            trackIds = playlist.trackIds
+                                .map { canonicalIdByDuplicateId[it] ?: it }
+                                .distinct()
+                        )
+                    }
+                    savePlaylistsInternal(repairedPlaylists)
+                }
+            }
         }
 
         AudioAnalyzer.BUILT_IN_TRACKS + verifiedImported
@@ -116,6 +145,23 @@ class MusicLibraryRepository(private val context: Context) {
                 return@withContext Result.failure(
                     IllegalArgumentException(
                         "O arquivo '$rawBaseTitle' parece ser um efeito sonoro ou diálogo e não uma música."
+                    )
+                )
+            }
+
+            // Impede reimportação do mesmo áudio mesmo quando o arquivo foi renomeado.
+            val importedFingerprint = sha256(targetFile)
+            val existingDuplicate = loadImportedTracksFromManifest().firstOrNull { existing ->
+                val existingPath = existing.uriString ?: return@firstOrNull false
+                val existingFile = File(existingPath)
+                existingFile.exists() && existingFile.length() > 0L &&
+                    runCatching { sha256(existingFile) == importedFingerprint }.getOrDefault(false)
+            }
+            if (existingDuplicate != null) {
+                targetFile.delete()
+                return@withContext Result.failure(
+                    IllegalArgumentException(
+                        "Esta música já está na biblioteca: ${existingDuplicate.title} — ${existingDuplicate.artist}."
                     )
                 )
             }
@@ -429,6 +475,19 @@ class MusicLibraryRepository(private val context: Context) {
             runCatching { tempFile.delete() }
             Result.failure(Exception("Falha ao persistir biblioteca musical: ${e.message}"))
         }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
     }
 
     private fun getDisplayName(uri: Uri): String? {
