@@ -534,12 +534,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 }
             }
 
-            AnalogRockMeterWithTubes(
-                rockMeter = rockMeter,
-                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
-                showStarPowerTubes = strikeEnabled
-            )
+            // Indicador visual do Rock Meter removido conforme a referência de palco.
+            // A mecânica interna de desempenho continua ativa para pontuação e regras do jogo.
         }
 
         // Receptores de toque compactos, circulares e centralizados na base da pista.
@@ -564,6 +560,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     val color = LaneColors[lane]
                     val isPressed = activeFretLanes.contains(lane)
 
+                    // Área de toque invisível sobre o receptor já desenhado na pista.
+                    // O Canvas fornece o visual; esta camada fornece somente a entrada tátil.
                     Surface(
                         modifier = Modifier
                             .size(58.dp)
@@ -581,50 +579,10 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                                     else -> false
                                 }
                             },
-                        color = if (isPressed) color.copy(alpha = 0.88f) else Color(0xCC161026),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = Brush.verticalGradient(
-                                listOf(Color(0xFFE6EAF2), color, Color(0xFF1A1426))
-                            ),
-                            width = if (isPressed) 4.dp else 2.dp
-                        ),
+                        color = Color.Transparent,
+                        border = null,
                         shape = CircleShape
-                    ) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(
-                                        brush = Brush.radialGradient(
-                                            listOf(
-                                                Color.White.copy(alpha = if (isPressed) 0.98f else 0.72f),
-                                                color.copy(alpha = if (isPressed) 0.98f else 0.85f),
-                                                color.copy(alpha = 0.30f)
-                                            )
-                                        ),
-                                        shape = CircleShape
-                                    )
-                                    .border(
-                                        width = if (isPressed) 3.dp else 2.dp,
-                                        color = if (isPressed) Color.White else Color(0xFFE6EAF2),
-                                        shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .background(
-                                            color = Color.White.copy(alpha = 0.92f),
-                                            shape = CircleShape
-                                        )
-                                )
-                            }
-                        }
-                    }
+                    ) { }
                 }
 
                 if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
