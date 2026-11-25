@@ -291,7 +291,7 @@ fun drawHighway(
         val color = if (isStarPowerActive) Color(0xFF00E5FF) else LaneColors[lane]
         val isPressed = activeFretLanes.contains(lane)
         val rx = (bottomWidth / numLanes) * 0.38f
-        val ry = rx * 0.62f
+        val ry = rx
 
         // Base escura do anel receptor
         drawScope.drawOval(
@@ -344,7 +344,7 @@ fun drawHighway(
             val notePos = get3dPosition(note.lane, depth)
             val laneW = (topWidth + (bottomWidth - topWidth) * curved) / numLanes
             val rx = (laneW * 0.37f).coerceIn(7f, 40f)
-            val ry = rx * 0.64f
+            val ry = rx
 
             if (note.durationMs > 50L) {
                 val tailEndDepth = (1.0f - ((timeUntilHit + note.durationMs).toFloat() / lookAheadMs.toFloat())).coerceIn(0f, 1.15f)
