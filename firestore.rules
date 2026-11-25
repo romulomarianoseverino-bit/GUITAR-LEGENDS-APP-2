@@ -1,0 +1,403 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Regra global de bloqueio padrão
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidNicknameKey(key) {
+      return key is string && key.size() >= 3 && key.size() <= 24 && key.matches('^[a-z0-9_\\-]+$');
+    }
+
+    function utcDayKey(ts) {
+      return string(ts.year()) + '-' +
+             (ts.month() < 10 ? '0' + string(ts.month()) : string(ts.month())) + '-' +
+             (ts.day() < 10 ? '0' + string(ts.day()) : string(ts.day()));
+    }
+
+    function isValidCustomRocker(rocker) {
+      return rocker is map &&
+             rocker.keys().hasAll([
+               'creationMethod', 'artStyle', 'hairStyle', 'hairColorHex',
+               'topClothing', 'pantsClothing', 'shoesClothing', 'accessories', 'bodyTattoos'
+             ]) &&
+             rocker.keys().hasOnly([
+               'photoUri', 'creationMethod', 'artStyle', 'hairStyle', 'hairColorHex',
+               'topClothing', 'pantsClothing', 'shoesClothing', 'accessories', 'bodyTattoos'
+             ]) &&
+             (!('photoUri' in rocker) || rocker.photoUri == null || (rocker.photoUri is string && rocker.photoUri.size() <= 512)) &&
+             rocker.creationMethod is string && rocker.creationMethod.size() <= 64 &&
+             rocker.artStyle is string && rocker.artStyle.size() <= 64 &&
+             rocker.hairStyle is string && rocker.hairStyle.size() <= 80 &&
+             rocker.hairColorHex is int &&
+             rocker.topClothing is string && rocker.topClothing.size() <= 80 &&
+             rocker.pantsClothing is string && rocker.pantsClothing.size() <= 80 &&
+             rocker.shoesClothing is string && rocker.shoesClothing.size() <= 80 &&
+             rocker.accessories is string && rocker.accessories.size() <= 100 &&
+             rocker.bodyTattoos is string && rocker.bodyTattoos.size() <= 100;
+    }
+
+    function isValidUserAccount(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.email is string && data.email.size() <= 200 &&
+             data.nickname is string && data.nickname.size() >= 3 && data.nickname.size() <= 24 &&
+             data.nicknameNormalized is string && isValidNicknameKey(data.nicknameNormalized) &&
+             data.coins is int && data.coins >= 0 && data.coins <= 10000000 &&
+             data.totalScore is int && data.totalScore >= 0 &&
+             data.notesHitTotal is int && data.notesHitTotal >= 0 &&
+             data.maxStreakOverall is int && data.maxStreakOverall >= 0 &&
+             data.songsCompleted is int && data.songsCompleted >= 0 &&
+             data.unlockedStars is int && data.unlockedStars >= 0 &&
+             data.competitiveWins is int && data.competitiveWins >= 0 &&
+             data.competitiveMatches is int && data.competitiveMatches >= 0 &&
+             data.careerStageMax is int && data.careerStageMax >= 0 &&
+             data.selectedCharacterId is string && data.selectedCharacterId.size() <= 64 &&
+             data.selectedGuitarId is string && data.selectedGuitarId.size() <= 64 &&
+             data.selectedBassId is string && data.selectedBassId.size() <= 64 &&
+             data.selectedDrumsId is string && data.selectedDrumsId.size() <= 64 &&
+             data.selectedVocalMicId is string && data.selectedVocalMicId.size() <= 64 &&
+             data.selectedHighwayThemeId is string && data.selectedHighwayThemeId.size() <= 64 &&
+             data.unlockedCosmetics is list && data.unlockedCosmetics.size() <= 150 &&
+             (data.unlockedCosmetics.size() == 0 || data.unlockedCosmetics[0] is string) &&
+             data.achievementsUnlocked is list && data.achievementsUnlocked.size() <= 60 &&
+             (data.achievementsUnlocked.size() == 0 || data.achievementsUnlocked[0] is string) &&
+             isValidCustomRocker(data.customRocker) &&
+             data.glassAdaptiveEnabled is bool &&
+             data.audioLatencyOffsetMs is int && data.audioLatencyOffsetMs >= -500 && data.audioLatencyOffsetMs <= 500 &&
+             data.controlMode is string && data.controlMode.size() <= 32 &&
+             data.graphicsQuality is string && data.graphicsQuality.size() <= 32 &&
+             data.rewardStreak is int && data.rewardStreak >= 0 && data.rewardStreak <= 3650 &&
+             data.lastRewardDayKey is string && data.lastRewardDayKey.size() <= 20 &&
+             data.schemaVersion is int && data.schemaVersion >= 1 &&
+             data.syncRevision is int && data.syncRevision >= 1 &&
+             (!('studioProfileJson' in data) || (data.studioProfileJson is string && data.studioProfileJson.size() <= 24576)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidNicknameClaim(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.nickname is string && data.nickname.size() >= 3 && data.nickname.size() <= 24 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidDailyRewardClaim(data, userId, claimId) {
+      return data.userId is string && data.userId == userId &&
+             data.dayKey is string && data.dayKey == claimId &&
+             data.dayKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             data.dayKey == utcDayKey(request.time) &&
+             data.dayNumber is int && data.dayNumber >= 1 && data.dayNumber <= 30 &&
+             data.streakCount is int && data.streakCount >= 1 &&
+             data.rewardTitle is string && data.rewardTitle.size() >= 1 && data.rewardTitle.size() <= 100 &&
+             data.rewardType is string && data.rewardType in ['coins', 'cosmetic', 'skin', 'bundle'] &&
+             data.coinsGranted is int && data.coinsGranted >= 0 && data.coinsGranted <= 100 &&
+             data.cosmeticId is string && data.cosmeticId.size() <= 64 &&
+             data.claimedAt is timestamp && data.claimedAt <= request.time;
+    }
+
+    function isValidProgressionEntry(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.trackId is string && data.trackId.size() >= 1 && data.trackId.size() <= 128 &&
+             data.trackTitle is string && data.trackTitle.size() >= 1 && data.trackTitle.size() <= 160 &&
+             data.instrument is string && data.instrument.size() >= 1 && data.instrument.size() <= 32 &&
+             data.difficulty is string && data.difficulty.size() >= 1 && data.difficulty.size() <= 32 &&
+             data.score is int && data.score >= 0 &&
+             data.stars is int && data.stars >= 1 && data.stars <= 5 &&
+             data.accuracyPercent is number && data.accuracyPercent >= 0 && data.accuracyPercent <= 100 &&
+             data.coinsEarned is int && data.coinsEarned >= 0 &&
+             data.isCompetitive is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // 1. Perfil privado e salvamento completo na nuvem
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'email', 'nickname', 'nicknameNormalized', 'coins',
+                         'totalScore', 'notesHitTotal', 'maxStreakOverall', 'songsCompleted',
+                         'unlockedStars', 'competitiveWins', 'competitiveMatches', 'careerStageMax',
+                         'selectedCharacterId', 'selectedGuitarId', 'selectedBassId',
+                         'selectedDrumsId', 'selectedVocalMicId', 'selectedHighwayThemeId',
+                         'unlockedCosmetics', 'achievementsUnlocked', 'customRocker',
+                         'glassAdaptiveEnabled', 'audioLatencyOffsetMs', 'controlMode',
+                         'graphicsQuality', 'rewardStreak', 'lastRewardDayKey',
+                         'schemaVersion', 'syncRevision', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'email', 'nickname', 'nicknameNormalized', 'coins',
+                         'totalScore', 'notesHitTotal', 'maxStreakOverall', 'songsCompleted',
+                         'unlockedStars', 'competitiveWins', 'competitiveMatches', 'careerStageMax',
+                         'selectedCharacterId', 'selectedGuitarId', 'selectedBassId',
+                         'selectedDrumsId', 'selectedVocalMicId', 'selectedHighwayThemeId',
+                         'unlockedCosmetics', 'achievementsUnlocked', 'customRocker',
+                         'glassAdaptiveEnabled', 'audioLatencyOffsetMs', 'controlMode',
+                         'graphicsQuality', 'rewardStreak', 'lastRewardDayKey',
+                         'schemaVersion', 'syncRevision', 'studioProfileJson', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserAccount(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserAccount(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().syncRevision >= existing().syncRevision &&
+                       (
+                         // Ação 1: Sincronização de progresso, inventário, personalização e configurações
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'email', 'nickname', 'nicknameNormalized', 'coins',
+                           'totalScore', 'notesHitTotal', 'maxStreakOverall', 'songsCompleted',
+                           'unlockedStars', 'competitiveWins', 'competitiveMatches', 'careerStageMax',
+                           'selectedCharacterId', 'selectedGuitarId', 'selectedBassId',
+                           'selectedDrumsId', 'selectedVocalMicId', 'selectedHighwayThemeId',
+                           'unlockedCosmetics', 'achievementsUnlocked', 'customRocker',
+                           'glassAdaptiveEnabled', 'audioLatencyOffsetMs', 'controlMode',
+                           'graphicsQuality', 'rewardStreak', 'lastRewardDayKey',
+                           'schemaVersion', 'syncRevision', 'studioProfileJson', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Subcoleção: Recompensas diárias imutáveis com validação temporal no servidor
+      match /reward_claims/{claimId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(claimId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'dayKey', 'dayNumber', 'streakCount',
+                           'rewardTitle', 'rewardType', 'coinsGranted', 'cosmeticId', 'claimedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'dayKey', 'dayNumber', 'streakCount',
+                           'rewardTitle', 'rewardType', 'coinsGranted', 'cosmeticId', 'claimedAt'
+                         ]) &&
+                         isValidDailyRewardClaim(incoming(), userId, claimId);
+        allow update, delete: if false;
+      }
+
+      // Subcoleção: Histórico de progressão e partidas
+      match /progression_history/{entryId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(entryId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'trackId', 'trackTitle', 'instrument', 'difficulty',
+                           'score', 'stars', 'accuracyPercent', 'coinsEarned', 'isCompetitive', 'createdAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'trackId', 'trackTitle', 'instrument', 'difficulty',
+                           'score', 'stars', 'accuracyPercent', 'coinsEarned', 'isCompetitive', 'createdAt'
+                         ]) &&
+                         isValidProgressionEntry(incoming(), userId);
+        allow update, delete: if false;
+      }
+    }
+
+    // 2. Reserva de nicknames exclusivos (sem exposição de PII nem listagem aberta)
+    match /nicknames/{normalizedNickname} {
+      allow get: if isSignedIn() && isValidNicknameKey(normalizedNickname);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+                       isValidNicknameKey(normalizedNickname) &&
+                       incoming().keys().hasAll(['userId', 'nickname', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'nickname', 'createdAt']) &&
+                       isValidNicknameClaim(incoming());
+      allow update: if false;
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // 3. Catálogo de versões/atualizações (somente leitura para clientes autenticados)
+    match /app_releases/{releaseId} {
+      allow get, list: if isSignedIn();
+      allow write: if false;
+    }
+
+    function isValidRoomCode(code) {
+      return code is string && code.size() >= 4 && code.size() <= 24 && code.matches('^[A-Z0-9_\\-]+$');
+    }
+
+    function isValidMultiplayerRoom(data, roomCode) {
+      return data.roomCode is string && data.roomCode == roomCode && isValidRoomCode(data.roomCode) &&
+             data.hostUid is string && data.hostUid.size() >= 1 && data.hostUid.size() <= 128 &&
+             data.hostNickname is string && data.hostNickname.size() >= 2 && data.hostNickname.size() <= 24 &&
+             data.mode is string && data.mode in ['BATTLE_1V1', 'BAND_COOP'] &&
+             data.status is string && data.status in ['WAITING', 'PLAYING', 'FINISHED', 'CLOSED'] &&
+             data.trackId is string && data.trackId.size() >= 1 && data.trackId.size() <= 128 &&
+             data.trackTitle is string && data.trackTitle.size() >= 1 && data.trackTitle.size() <= 160 &&
+             data.maxPlayers is int && data.maxPlayers >= 2 && data.maxPlayers <= 4 &&
+             data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= data.maxPlayers &&
+             data.memberUids[0] is string && data.hostUid in data.memberUids &&
+             data.winnerUid is string && data.winnerUid.size() <= 128 &&
+             (!('inviteMessage' in data) || (data.inviteMessage is string && data.inviteMessage.size() <= 160)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidMultiplayerParticipant(data, roomCode, participantUid) {
+      return data.userId is string && data.userId == participantUid &&
+             data.roomCode is string && data.roomCode == roomCode &&
+             data.nickname is string && data.nickname.size() >= 2 && data.nickname.size() <= 24 &&
+             data.instrument is string && data.instrument in ['GUITAR', 'ACOUSTIC_GUITAR', 'BASS', 'DRUMS', 'VOCALS'] &&
+             data.difficulty is string && data.difficulty in ['EASY', 'MEDIUM', 'HARD', 'EXPERT'] &&
+             data.ready is bool &&
+             data.connectionState is string && data.connectionState in ['ONLINE', 'RECONNECTING', 'DISCONNECTED'] &&
+             data.score is int && data.score >= 0 && data.score <= 50000000 &&
+             data.combo is int && data.combo >= 0 && data.combo <= 100000 &&
+             data.rockMeter is number && data.rockMeter >= 0 && data.rockMeter <= 1 &&
+             data.starPowerActive is bool &&
+             data.lastHeartbeatMs is int && data.lastHeartbeatMs >= 0 &&
+             data.joinedAt is timestamp && data.joinedAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 4. Salas Multiplayer (acesso autenticado por código exato ou participação ativa)
+    match /multiplayer_rooms/{roomCode} {
+      allow get: if isSignedIn() && isValidRoomCode(roomCode);
+      allow list: if isSignedIn() && (request.auth.uid in resource.data.memberUids);
+
+      allow create: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       incoming().hostUid == request.auth.uid &&
+                       incoming().status == 'WAITING' &&
+                       incoming().keys().hasAll([
+                         'roomCode', 'hostUid', 'hostNickname', 'mode', 'status',
+                         'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
+                         'winnerUid', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'roomCode', 'hostUid', 'hostNickname', 'mode', 'status',
+                         'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
+                         'winnerUid', 'inviteMessage', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidMultiplayerRoom(incoming(), roomCode);
+
+      allow update: if isSignedIn() &&
+                       isValidRoomCode(roomCode) &&
+                       existing().status != 'CLOSED' &&
+                       incoming().roomCode == existing().roomCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidMultiplayerRoom(incoming(), roomCode) &&
+                       (
+                         // Ação 1: Host atualiza modo, faixa, início ou encerramento da sala
+                         (
+                           incoming().hostUid == existing().hostUid &&
+                           existing().hostUid == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'updatedAt'
+                           ])
+                         ) ||
+                         // Ação 2: Convidado entra na sala em espera respeitando limite
+                         (
+                           incoming().hostUid == existing().hostUid &&
+                           existing().status == 'WAITING' &&
+                           !(request.auth.uid in existing().memberUids) &&
+                           request.auth.uid in incoming().memberUids &&
+                           incoming().memberUids.hasAll(existing().memberUids) &&
+                           incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+                         ) ||
+                         // Ação 3: Participante sai da sala removendo apenas seu próprio UID
+                         (
+                           incoming().hostUid == existing().hostUid &&
+                           request.auth.uid != existing().hostUid &&
+                           request.auth.uid in existing().memberUids &&
+                           !(request.auth.uid in incoming().memberUids) &&
+                           existing().memberUids.hasAll(incoming().memberUids) &&
+                           incoming().memberUids.size() == existing().memberUids.size() - 1 &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+                         ) ||
+                         // Ação 4: Anfitrião sai com outros músicos ativos -> transfere anfitrião atomicamente
+                         (
+                           existing().hostUid == request.auth.uid &&
+                           existing().memberUids.size() > 1 &&
+                           !(request.auth.uid in incoming().memberUids) &&
+                           existing().memberUids.hasAll(incoming().memberUids) &&
+                           incoming().memberUids.size() == existing().memberUids.size() - 1 &&
+                           incoming().hostUid in incoming().memberUids &&
+                           incoming().hostUid != existing().hostUid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['hostUid', 'hostNickname', 'memberUids', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidRoomCode(roomCode) && existing().hostUid == request.auth.uid;
+
+      match /participants/{participantUid} {
+        allow get, list: if isSignedIn() &&
+                           isValidRoomCode(roomCode) &&
+                           (
+                             request.auth.uid == participantUid ||
+                             (exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+                              request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids)
+                           );
+
+        allow create: if isSignedIn() &&
+                         isValidRoomCode(roomCode) &&
+                         isValidId(participantUid) &&
+                         request.auth.uid == participantUid &&
+                         exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+                         request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids &&
+                         incoming().keys().hasAll([
+                           'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
+                           'ready', 'connectionState', 'score', 'combo', 'rockMeter',
+                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
+                           'ready', 'connectionState', 'score', 'combo', 'rockMeter',
+                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                         ]) &&
+                         isValidMultiplayerParticipant(incoming(), roomCode, participantUid);
+
+        allow update: if isSignedIn() &&
+                         isValidRoomCode(roomCode) &&
+                         isValidId(participantUid) &&
+                         request.auth.uid == participantUid &&
+                         incoming().userId == existing().userId &&
+                         incoming().roomCode == existing().roomCode &&
+                         incoming().joinedAt == existing().joinedAt &&
+                         isValidMultiplayerParticipant(incoming(), roomCode, participantUid) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'nickname', 'instrument', 'difficulty', 'ready',
+                           'connectionState', 'score', 'combo', 'rockMeter',
+                           'starPowerActive', 'lastHeartbeatMs', 'updatedAt'
+                         ]);
+
+        allow delete: if isSignedIn() &&
+                         isValidRoomCode(roomCode) &&
+                         (
+                           request.auth.uid == participantUid ||
+                           (exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+                            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.hostUid == request.auth.uid)
+                         );
+      }
+    }
+  }
+}
