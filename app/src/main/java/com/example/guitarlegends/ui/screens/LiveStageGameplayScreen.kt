@@ -542,7 +542,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             )
         }
 
-        // Bottom Controls: Fret Strike Touch Buttons ligados visualmente (o--o--o--o) e adaptados à dificuldade
+        // Receptores de toque compactos, circulares e centralizados na base da pista.
+        // A área de toque acompanha cada receptor; não há painéis ovais ou caixas duplicadas.
         Box(
             modifier = Modifier
                 .align(if (isDualMultiplayer) Alignment.BottomStart else Alignment.BottomCenter)
@@ -554,21 +555,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 .height(68.dp),
             contentAlignment = Alignment.Center
         ) {
-            // Haste horizontal metálica conectando os botões receptores (o--o--o--o)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.84f)
-                    .height(6.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(Color(0xFF282238), Color(0xFFDDE2EB), Color(0xFF282238))),
-                        RoundedCornerShape(3.dp)
-                    )
-                    .border(1.dp, Color(0xFF14111D), RoundedCornerShape(3.dp))
-            )
-
             Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 for (lane in 0 until numLanes) {
@@ -577,9 +566,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
 
                     Surface(
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(CircleShape)
+                            .size(58.dp)
                             .testTag("fret_touch_button_$lane")
                             .pointerInteropFilter { motionEvent ->
                                 when (motionEvent.actionMasked) {
@@ -594,20 +581,22 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                                     else -> false
                                 }
                             },
-                        color = if (isPressed) color.copy(alpha = 0.85f) else Color(0xCC161026),
+                        color = if (isPressed) color.copy(alpha = 0.88f) else Color(0xCC161026),
                         border = ButtonDefaults.outlinedButtonBorder.copy(
                             brush = Brush.verticalGradient(
                                 listOf(Color(0xFFE6EAF2), color, Color(0xFF1A1426))
                             ),
-                            width = if (isPressed) 4.dp else 3.dp
+                            width = if (isPressed) 4.dp else 2.dp
                         ),
                         shape = CircleShape
                     ) {
-                        // Botão circular clássico limpo de traste (sem textos 'PISTA 1..5')
-                        Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Box(
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(40.dp)
                                     .background(
                                         brush = Brush.radialGradient(
                                             listOf(
@@ -627,9 +616,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(16.dp)
+                                        .size(14.dp)
                                         .background(
-                                            color = if (isPressed) Color.White else Color.White.copy(alpha = 0.90f),
+                                            color = Color.White.copy(alpha = 0.92f),
                                             shape = CircleShape
                                         )
                                 )
@@ -638,18 +627,17 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     }
                 }
 
-                // Optional Strum bar for Fret+Strum mode
                 if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
                     Button(
                         onClick = { viewModel.onStrumBar() },
                         colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
-                            .weight(1.15f)
-                            .fillMaxHeight()
+                            .width(78.dp)
+                            .height(54.dp)
                             .testTag("strum_bar_button")
                     ) {
-                        Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 11.sp)
+                        Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
                     }
                 }
             }
