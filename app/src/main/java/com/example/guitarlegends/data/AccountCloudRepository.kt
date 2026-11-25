@@ -48,6 +48,24 @@ class AccountCloudRepository(
         return sdf.format(cal.time)
     }
 
+    fun utcWeekStartKey(nowMillis: Long = System.currentTimeMillis()): String {
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            timeInMillis = nowMillis
+            firstDayOfWeek = Calendar.MONDAY
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            val dayOfWeek = get(Calendar.DAY_OF_WEEK)
+            val diffFromMonday = (dayOfWeek - Calendar.MONDAY + 7) % 7
+            add(Calendar.DAY_OF_YEAR, -diffFromMonday)
+        }
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        return sdf.format(cal.time)
+    }
+
     suspend fun isNicknameAvailable(nickname: String): Result<Boolean> {
         val trimmed = nickname.trim()
         if (!isValidNicknameFormat(trimmed)) {
@@ -199,14 +217,16 @@ class AccountCloudRepository(
                     if (nickSnap.exists() && nickSnap.getString("userId") != uid) {
                         throw IllegalStateException("Nickname já reservado por outra conta.")
                     }
-                    tx.set(
-                        nickRef,
-                        mapOf(
-                            "userId" to uid,
-                            "nickname" to nick,
-                            "createdAt" to FieldValue.serverTimestamp()
+                    if (!nickSnap.exists()) {
+                        tx.set(
+                            nickRef,
+                            mapOf(
+                                "userId" to uid,
+                                "nickname" to nick,
+                                "createdAt" to FieldValue.serverTimestamp()
+                            )
                         )
-                    )
+                    }
                     tx.set(userRef, cloudObj.toCreateMap())
                     cloudObj
                 } else {
@@ -258,13 +278,15 @@ class AccountCloudRepository(
 
     suspend fun claimDailyReward(
         localStats: PlayerStats,
-        dayKeyOverride: String? = null
+        dayKeyOverride: String? = null,
+        weekKeyOverride: String? = null
     ): Result<Pair<DailyRewardClaimCloud, UserAccountCloud>> {
         val user = auth.currentUser
             ?: return Result.failure(IllegalStateException("Faça login para resgatar recompensas diárias."))
         val uid = user.uid
         val todayKey = dayKeyOverride ?: utcTodayKey()
         val yesterdayKey = utcYesterdayKey()
+        val weekKey = weekKeyOverride ?: utcWeekStartKey()
         val claimPath = "users/$uid/reward_claims/$todayKey"
 
         return try {
@@ -295,6 +317,15 @@ class AccountCloudRepository(
                 val dayNumber = ((newStreak - 1) % 30) + 1
                 val rewardDef = DailyRewardCatalog.rewardForDay(dayNumber)
 
+                val sameWeek = existingUser.dailyRewardWeekKey == weekKey
+                val weeklyUsed = if (sameWeek) {
+                    existingUser.dailyRewardWeeklyCoinsClaimed.coerceIn(0, DailyRewardCatalog.WEEKLY_REWARD_CAP)
+                } else {
+                    0
+                }
+                val remainingCap = (DailyRewardCatalog.WEEKLY_REWARD_CAP - weeklyUsed).coerceAtLeast(0)
+                val coinsGranted = minOf(rewardDef.coinsGranted, remainingCap)
+
                 val claimPayload = mapOf(
                     "userId" to uid,
                     "dayKey" to todayKey,
@@ -302,7 +333,7 @@ class AccountCloudRepository(
                     "streakCount" to newStreak,
                     "rewardTitle" to rewardDef.title,
                     "rewardType" to rewardDef.rewardType,
-                    "coinsGranted" to rewardDef.coinsGranted,
+                    "coinsGranted" to coinsGranted,
                     "cosmeticId" to rewardDef.cosmeticId,
                     "claimedAt" to FieldValue.serverTimestamp()
                 )
@@ -319,11 +350,13 @@ class AccountCloudRepository(
 
                 val nextRevision = maxOf(existingUser.syncRevision, localStats.syncRevision) + 1L
                 val updatedUser = existingUser.copy(
-                    coins = existingUser.coins + rewardDef.coinsGranted,
+                    coins = existingUser.coins + coinsGranted,
                     unlockedCosmetics = updatedCosmetics,
                     achievementsUnlocked = updatedAchievements,
                     rewardStreak = newStreak,
                     lastRewardDayKey = todayKey,
+                    dailyRewardWeekKey = weekKey,
+                    dailyRewardWeeklyCoinsClaimed = weeklyUsed + coinsGranted,
                     syncRevision = nextRevision
                 )
 
@@ -338,7 +371,7 @@ class AccountCloudRepository(
                     streakCount = newStreak,
                     rewardTitle = rewardDef.title,
                     rewardType = rewardDef.rewardType,
-                    coinsGranted = rewardDef.coinsGranted,
+                    coinsGranted = coinsGranted,
                     cosmeticId = rewardDef.cosmeticId,
                     claimedAt = Timestamp.now()
                 )
@@ -446,6 +479,15 @@ class AccountCloudRepository(
     }
 
     private fun mergeStats(primary: PlayerStats, secondary: PlayerStats): PlayerStats {
+        val mergedWeekKey = maxOf(primary.dailyRewardWeekKey, secondary.dailyRewardWeekKey)
+        val mergedWeeklyCoins = when {
+            mergedWeekKey.isBlank() -> 0
+            primary.dailyRewardWeekKey == mergedWeekKey && secondary.dailyRewardWeekKey == mergedWeekKey ->
+                maxOf(primary.dailyRewardWeeklyCoinsClaimed, secondary.dailyRewardWeeklyCoinsClaimed)
+            primary.dailyRewardWeekKey == mergedWeekKey -> primary.dailyRewardWeeklyCoinsClaimed
+            else -> secondary.dailyRewardWeeklyCoinsClaimed
+        }.coerceIn(0, DailyRewardCatalog.WEEKLY_REWARD_CAP)
+
         return primary.copy(
             coins = maxOf(primary.coins, secondary.coins),
             totalScore = maxOf(primary.totalScore, secondary.totalScore),
@@ -458,6 +500,8 @@ class AccountCloudRepository(
             careerStageMax = maxOf(primary.careerStageMax, secondary.careerStageMax),
             rewardStreak = maxOf(primary.rewardStreak, secondary.rewardStreak),
             lastRewardDayKey = maxOf(primary.lastRewardDayKey, secondary.lastRewardDayKey),
+            dailyRewardWeekKey = mergedWeekKey,
+            dailyRewardWeeklyCoinsClaimed = mergedWeeklyCoins,
             unlockedCosmetics = (primary.unlockedCosmetics + secondary.unlockedCosmetics + DEFAULT_UNLOCKED_COSMETICS).distinct(),
             achievementsUnlocked = (primary.achievementsUnlocked + secondary.achievementsUnlocked).distinct(),
             schemaVersion = maxOf(primary.schemaVersion, secondary.schemaVersion)

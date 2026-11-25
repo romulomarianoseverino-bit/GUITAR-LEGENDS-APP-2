@@ -51,6 +51,8 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val connectionWarning by viewModel.multiplayerConnectionWarning.collectAsState()
     val tracks by viewModel.tracks.collectAsState()
     val selectedTrack by viewModel.selectedTrackFlow.collectAsState()
+    val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
+    val effectiveStrikeEnabled = room?.strikeEnabled ?: localStrikeEnabled
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -62,6 +64,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val selfUid = viewModel.currentMultiplayerUid()
     val isSignedIn = selfUid != null && (authState is AuthUiState.Authenticated || authState is AuthUiState.NeedsNickname)
     val isHost = room != null && selfUid != null && room!!.hostUid == selfUid
+    val canEditStrike = room == null || (isHost && room!!.statusEnum == RoomStatus.WAITING)
     val selfParticipant = participants.find { it.userId == selfUid }
 
     Column(
@@ -130,6 +133,108 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                 modifier = Modifier.weight(1f),
                                 onClick = { viewModel.setMultiplayerMode(MultiplayerMode.BAND_COOP) }
                             )
+                        }
+
+                        // Sistema de Strike (Com Strike / Sem Strike) — configurável antes da partida
+                        Surface(
+                            color = Color(0x1AFFFFFF),
+                            shape = RoundedCornerShape(12.dp),
+                            border = ButtonDefaults.outlinedButtonBorder.copy(
+                                brush = Brush.horizontalGradient(
+                                    listOf(
+                                        if (effectiveStrikeEnabled) RockAccentCyan else RockAccentGold,
+                                        RockCardBorder
+                                    )
+                                )
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("multiplayer_strike_card")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "SISTEMA DE STRIKE (STAR POWER)",
+                                        color = RockAccentCyan,
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 9.sp
+                                    )
+                                    if (room != null && room!!.statusEnum == RoomStatus.PLAYING) {
+                                        Text(
+                                            text = "TRAVADO NA PARTIDA",
+                                            color = RockAccentGold,
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 8.sp,
+                                            modifier = Modifier.testTag("multiplayer_strike_locked_badge")
+                                        )
+                                    } else if (room != null && !isHost) {
+                                        Text(
+                                            text = "DEFINIDO PELO HOST",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 8.sp
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Button(
+                                        onClick = { viewModel.setMultiplayerStrikeEnabled(true) },
+                                        enabled = canEditStrike,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (effectiveStrikeEnabled) RockAccentCyan else Color(0x22FFFFFF),
+                                            contentColor = if (effectiveStrikeEnabled) Color.Black else Color.White,
+                                            disabledContainerColor = if (effectiveStrikeEnabled) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("multiplayer_strike_toggle_com")
+                                    ) {
+                                        Text(
+                                            text = if (effectiveStrikeEnabled) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 9.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+
+                                    Button(
+                                        onClick = { viewModel.setMultiplayerStrikeEnabled(false) },
+                                        enabled = canEditStrike,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (!effectiveStrikeEnabled) RockAccentGold else Color(0x22FFFFFF),
+                                            contentColor = if (!effectiveStrikeEnabled) Color.Black else Color.White,
+                                            disabledContainerColor = if (!effectiveStrikeEnabled) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("multiplayer_strike_toggle_sem")
+                                    ) {
+                                        Text(
+                                            text = if (!effectiveStrikeEnabled) "SEM STRIKE ✔" else "SEM STRIKE",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 9.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         if (room == null) {

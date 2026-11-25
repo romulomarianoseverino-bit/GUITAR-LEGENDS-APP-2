@@ -45,7 +45,8 @@ class MultiplayerCloudRepository(
         nickname: String,
         instrument: Instrument,
         difficulty: Difficulty,
-        customRoomCode: String? = null
+        customRoomCode: String? = null,
+        strikeEnabled: Boolean = true
     ): Result<MultiplayerRoomCloud> {
         val user = auth.currentUser
             ?: return Result.failure(IllegalStateException("Entre com sua conta Google antes de criar uma sala online."))
@@ -74,7 +75,8 @@ class MultiplayerCloudRepository(
                     maxPlayers = mode.maxPlayers,
                     memberUids = listOf(uid),
                     winnerUid = "",
-                    inviteMessage = "Entre na sala $roomCode no Guitar Legends!"
+                    inviteMessage = "Entre na sala $roomCode no Guitar Legends!",
+                    strikeEnabled = strikeEnabled
                 )
                 tx.set(roomRef, room.toCreateMap())
                 room
@@ -354,7 +356,8 @@ class MultiplayerCloudRepository(
         mode: MultiplayerMode,
         track: Track,
         status: RoomStatus? = null,
-        winnerUid: String? = null
+        winnerUid: String? = null,
+        strikeEnabled: Boolean? = null
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
@@ -373,6 +376,9 @@ class MultiplayerCloudRepository(
             }
             if (winnerUid != null) {
                 updates["winnerUid"] = winnerUid.take(128)
+            }
+            if (strikeEnabled != null) {
+                updates["strikeEnabled"] = strikeEnabled
             }
             firestore.collection("multiplayer_rooms")
                 .document(normalized)

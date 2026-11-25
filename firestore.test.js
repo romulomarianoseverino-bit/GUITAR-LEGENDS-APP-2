@@ -438,3 +438,70 @@ test("Multiplayer rooms: host transfer when host leaves active room & ACOUSTIC_G
   );
 });
 
+test("Strike System & Daily Weekly Cap: rules enforce host lock on PLAYING and <= 100 weekly coins cap", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  // 1. User daily weekly cap field bounds
+  const aliceUserRef = aliceDb.collection("users").doc(ALICE_UID);
+  await assertSucceeds(
+    aliceUserRef.set({
+      ...makeValidUserAccount(ALICE_UID, "Luan_Vocal", 1),
+      dailyRewardWeekKey: "2026-11-23",
+      dailyRewardWeeklyCoinsClaimed: 100,
+    })
+  );
+  await assertFails(
+    aliceUserRef.update({
+      dailyRewardWeeklyCoinsClaimed: 105,
+      syncRevision: 2,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // 2. Strike System room pre-match toggle allowed in WAITING by host, denied by guest, locked in PLAYING
+  const roomCode = "STRK-2026";
+  const aliceRoomRef = aliceDb.collection("multiplayer_rooms").doc(roomCode);
+  await assertSucceeds(
+    aliceRoomRef.set({
+      ...makeValidRoom(roomCode, ALICE_UID, "BATTLE_1V1", 2),
+      strikeEnabled: true,
+    })
+  );
+  await assertSucceeds(
+    aliceRoomRef.update({
+      strikeEnabled: false,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  await assertSucceeds(
+    bobDb.collection("multiplayer_rooms").doc(roomCode).update({
+      memberUids: [ALICE_UID, BOB_UID],
+      updatedAt: serverTimestamp(),
+    })
+  );
+  // Non-host cannot alter strikeEnabled
+  await assertFails(
+    bobDb.collection("multiplayer_rooms").doc(roomCode).update({
+      strikeEnabled: true,
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Start match -> PLAYING
+  await assertSucceeds(
+    aliceRoomRef.update({
+      status: "PLAYING",
+      updatedAt: serverTimestamp(),
+    })
+  );
+  // Host cannot mutate strikeEnabled after match enters PLAYING
+  await assertFails(
+    aliceRoomRef.update({
+      strikeEnabled: true,
+      updatedAt: serverTimestamp(),
+    })
+  );
+});
+

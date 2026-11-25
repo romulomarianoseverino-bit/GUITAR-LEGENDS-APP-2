@@ -28,6 +28,10 @@ import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.MemoryCacheSettings
+import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
@@ -36,9 +40,12 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.robolectric.Shadows
+import org.robolectric.annotation.LooperMode
 import java.io.File
 import java.util.UUID
 
+@LooperMode(LooperMode.Mode.PAUSED)
 class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
 
     @get:Rule
@@ -147,11 +154,36 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.onNodeWithTag("menu_multiplayer").assertIsDisplayed()
     }
 
+    private fun <T> awaitWithMainLooper(timeoutMs: Long = 6000L, block: suspend () -> T): T {
+        val deferred = CoroutineScope(Dispatchers.IO).async { block() }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!deferred.isCompleted) {
+            if (System.currentTimeMillis() > deadline) {
+                deferred.cancel()
+                throw AssertionError("Timed out after ${timeoutMs}ms waiting for async Firebase/ViewModel step")
+            }
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(15)
+        }
+        return runBlocking { deferred.await() }
+    }
+
+    private fun waitUntilWithMainLooper(timeoutMs: Long = 6000L, predicate: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!predicate()) {
+            if (System.currentTimeMillis() > deadline) {
+                throw AssertionError("Timed out after ${timeoutMs}ms waiting for condition")
+            }
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(15)
+        }
+    }
+
     @Test
-    fun `03 - full online room creation, second player join, live sync, disconnect detection, reconnect and exit`() = runBlocking {
+    fun `03 - full online room creation, second player join, live sync, disconnect detection, reconnect and exit`() {
         val tag = UUID.randomUUID().toString().replace("-", "").take(6).uppercase()
         val roomCode = "ROCK-$tag"
-        val aliceUid = signInTestUser("mp_alice_$tag@test.com")
+        val aliceUid = awaitWithMainLooper { signInTestUser("mp_alice_$tag@test.com") }
 
         val vm = GameViewModel(app)
         vm.updateGuestNickname("AliceLead")
@@ -172,9 +204,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         assertTrue(vm.currentScreen.value is GameScreen.CompetitiveMultiplayer)
 
         vm.createMultiplayerRoom(MultiplayerMode.BATTLE_1V1, customRoomCode = roomCode)
-        withTimeout(6000L) {
-            while (vm.multiplayerRoom.value == null) delay(60L)
-        }
+        waitUntilWithMainLooper { vm.multiplayerRoom.value != null }
         composeTestRule.waitForIdle()
         assertEquals(roomCode, vm.multiplayerRoom.value?.roomCode)
         composeTestRule.onNodeWithTag("multiplayer_room_code_card").assertIsDisplayed()
@@ -183,59 +213,51 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
 
         // 2. Segundo jogador (Bob) entra na sala pelo código
         val (bobAuth, bobRepo) = getOrInitSecondaryBobRepo(app)
-        val bobUid = signInSecondary(bobAuth, "mp_bob_$tag@test.com")
-        val bobJoinRes = withTimeout(6000L) {
+        val bobUid = awaitWithMainLooper { signInSecondary(bobAuth, "mp_bob_$tag@test.com") }
+        val bobJoinRes = awaitWithMainLooper {
             bobRepo.joinRoom(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD)
         }
         assertTrue("Bob must join Alice's room: ${bobJoinRes.exceptionOrNull()?.message}", bobJoinRes.isSuccess)
 
         // Espera sincronização em tempo real no ViewModel da Alice
-        withTimeout(6000L) {
-            while (vm.multiplayerParticipants.value.size < 2) delay(60L)
-        }
+        waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("participant_card_$bobUid").assertIsDisplayed()
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
-        withTimeout(5000L) {
+        awaitWithMainLooper {
             bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = true).getOrThrow()
             bobRepo.updateParticipantProgress(roomCode, score = 18500, combo = 27, rockMeter = 0.88f, starPowerActive = true).getOrThrow()
         }
         vm.updateMultiplayerTrack(AudioAnalyzer.BUILT_IN_TRACKS[1])
 
-        withTimeout(6000L) {
-            while (vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready != true) delay(60L)
-            while (vm.multiplayerRoom.value?.trackId != AudioAnalyzer.BUILT_IN_TRACKS[1].id) delay(60L)
+        waitUntilWithMainLooper {
+            vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == true &&
+                vm.multiplayerRoom.value?.trackId == AudioAnalyzer.BUILT_IN_TRACKS[1].id
         }
         assertEquals(18500, vm.multiplayerParticipants.value.find { it.userId == bobUid }?.score)
 
         // 4. Tratamento de Desconexão & Reconexão
-        withTimeout(5000L) {
+        awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.DISCONNECTED).getOrThrow()
         }
-        withTimeout(6000L) {
-            while (!vm.disconnectedPeerNicknames.value.contains("BobBass")) delay(60L)
-        }
+        waitUntilWithMainLooper { vm.disconnectedPeerNicknames.value.contains("BobBass") }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("multiplayer_connection_warning").assertIsDisplayed()
         composeTestRule.onNodeWithTag("multiplayer_reconnect_button").assertIsDisplayed()
 
         // 5. Código inexistente gera erro claro sem quebrar fluxo
         vm.joinMultiplayerRoom("NOPE-9999")
-        withTimeout(5000L) {
-            while (vm.multiplayerError.value == null) delay(60L)
-        }
+        waitUntilWithMainLooper { vm.multiplayerError.value != null }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("multiplayer_error_banner").assertIsDisplayed()
 
         // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
-        withTimeout(5000L) {
+        awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
         }
         vm.startMultiplayerMatch()
-        withTimeout(6000L) {
-            while (vm.multiplayerRoom.value?.statusEnum != RoomStatus.PLAYING) delay(60L)
-        }
+        waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
 
         // Encerra partida/sala e retorna à página principal
         vm.stop()

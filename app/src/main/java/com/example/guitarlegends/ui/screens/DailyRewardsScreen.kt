@@ -43,6 +43,17 @@ fun DailyRewardsScreen(viewModel: GameViewModel) {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date())
     }
+    val weekUtc = remember {
+        com.example.guitarlegends.data.LocalPlayerProgressRepository.utcWeekStartKey()
+    }
+    val weeklyClaimedCoins = remember(stats.dailyRewardWeekKey, stats.dailyRewardWeeklyCoinsClaimed, weekUtc) {
+        if (stats.dailyRewardWeekKey == weekUtc) {
+            stats.dailyRewardWeeklyCoinsClaimed.coerceIn(0, DailyRewardCatalog.WEEKLY_REWARD_CAP)
+        } else {
+            0
+        }
+    }
+    val remainingWeeklyDailyCoins = (DailyRewardCatalog.WEEKLY_REWARD_CAP - weeklyClaimedCoins).coerceAtLeast(0)
     val alreadyClaimedToday = stats.lastRewardDayKey == todayUtc ||
         rewardHistory.any { it.dayKey == todayUtc }
 
@@ -52,6 +63,7 @@ fun DailyRewardsScreen(viewModel: GameViewModel) {
         (stats.rewardStreak % 30) + 1
     }
     val featuredReward = DailyRewardCatalog.rewardForDay(nextDayNumber)
+    val effectiveDailyCoins = minOf(featuredReward.coinsGranted, remainingWeeklyDailyCoins)
 
     Column(
         modifier = Modifier
@@ -99,6 +111,31 @@ fun DailyRewardsScreen(viewModel: GameViewModel) {
                             )
                         }
 
+                        Surface(
+                            color = if (remainingWeeklyDailyCoins > 0) Color(0x2200E676) else Color(0x22FF9100),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("daily_weekly_cap_badge")
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                Text(
+                                    text = "LIMITE SEMANAL DIÁRIO: $weeklyClaimedCoins / ${DailyRewardCatalog.WEEKLY_REWARD_CAP} LC",
+                                    color = if (remainingWeeklyDailyCoins > 0) RockAccentGreen else RockAccentOrange,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 10.sp
+                                )
+                                Text(
+                                    text = if (remainingWeeklyDailyCoins > 0) {
+                                        "Músicas e duelos continuam rendendo moedas normalmente sem usar este limite."
+                                    } else {
+                                        "Teto semanal de moedas diárias atingido (reinicia na segunda UTC). Itens cosméticos continuam sendo liberados e as músicas seguem dando moedas!"
+                                    },
+                                    color = Color.White.copy(alpha = 0.78f),
+                                    fontSize = 9.sp,
+                                    lineHeight = 12.sp
+                                )
+                            }
+                        }
+
                         Text(
                             text = if (alreadyClaimedToday) "RECOMPENSA DE HOJE RESGATADA" else "PRÊMIO DO DIA $nextDayNumber",
                             color = Color.White,
@@ -126,8 +163,12 @@ fun DailyRewardsScreen(viewModel: GameViewModel) {
                                     Text(featuredReward.title, color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp)
                                     Text(featuredReward.description, color = Color.White.copy(alpha = 0.78f), fontSize = 10.sp)
                                     Text(
-                                        text = "+${featuredReward.coinsGranted} Moedas" +
-                                            if (featuredReward.cosmeticId.isNotBlank()) " + Item Desbloqueado" else "",
+                                        text = if (alreadyClaimedToday) {
+                                            "Resgate concluído hoje"
+                                        } else {
+                                            "+$effectiveDailyCoins Moedas" +
+                                                if (featuredReward.cosmeticId.isNotBlank()) " + Item Desbloqueado" else ""
+                                        },
                                         color = RockAccentCyan,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 10.sp
@@ -149,7 +190,7 @@ fun DailyRewardsScreen(viewModel: GameViewModel) {
                         }
 
                         Text(
-                            text = "Controle diário em UTC ($todayUtc). No modo visitante o progresso fica salvo no aparelho; conecte uma conta em Minha Conta para sincronizar na nuvem.",
+                            text = "Controle diário em UTC ($todayUtc) • Semana UTC $weekUtc. Partidas musicais não consomem a cota semanal diária.",
                             color = Color.White.copy(alpha = 0.55f),
                             fontSize = 9.sp,
                             lineHeight = 13.sp

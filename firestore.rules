@@ -64,6 +64,7 @@ service cloud.firestore {
              data.email is string && data.email.size() <= 200 &&
              data.nickname is string && data.nickname.size() >= 3 && data.nickname.size() <= 24 &&
              data.nicknameNormalized is string && isValidNicknameKey(data.nicknameNormalized) &&
+             data.nicknameNormalized == data.nickname.lower() &&
              data.coins is int && data.coins >= 0 && data.coins <= 10000000 &&
              data.totalScore is int && data.totalScore >= 0 &&
              data.notesHitTotal is int && data.notesHitTotal >= 0 &&
@@ -90,6 +91,8 @@ service cloud.firestore {
              data.graphicsQuality is string && data.graphicsQuality.size() <= 32 &&
              data.rewardStreak is int && data.rewardStreak >= 0 && data.rewardStreak <= 3650 &&
              data.lastRewardDayKey is string && data.lastRewardDayKey.size() <= 20 &&
+             (!('dailyRewardWeekKey' in data) || (data.dailyRewardWeekKey is string && data.dailyRewardWeekKey.size() <= 20)) &&
+             (!('dailyRewardWeeklyCoinsClaimed' in data) || (data.dailyRewardWeeklyCoinsClaimed is int && data.dailyRewardWeeklyCoinsClaimed >= 0 && data.dailyRewardWeeklyCoinsClaimed <= 100)) &&
              data.schemaVersion is int && data.schemaVersion >= 1 &&
              data.syncRevision is int && data.syncRevision >= 1 &&
              (!('studioProfileJson' in data) || (data.studioProfileJson is string && data.studioProfileJson.size() <= 24576)) &&
@@ -97,9 +100,10 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
-    function isValidNicknameClaim(data) {
+    function isValidNicknameClaim(data, normalizedNickname) {
       return data.userId is string && data.userId == request.auth.uid &&
              data.nickname is string && data.nickname.size() >= 3 && data.nickname.size() <= 24 &&
+             data.nickname.lower() == normalizedNickname &&
              data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
@@ -159,6 +163,7 @@ service cloud.firestore {
                          'unlockedCosmetics', 'achievementsUnlocked', 'customRocker',
                          'glassAdaptiveEnabled', 'audioLatencyOffsetMs', 'controlMode',
                          'graphicsQuality', 'rewardStreak', 'lastRewardDayKey',
+                         'dailyRewardWeekKey', 'dailyRewardWeeklyCoinsClaimed',
                          'schemaVersion', 'syncRevision', 'studioProfileJson', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidUserAccount(incoming());
@@ -169,6 +174,12 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        incoming().syncRevision >= existing().syncRevision &&
+                       (incoming().coins - existing().coins) <= 2000 &&
+                       incoming().unlockedStars >= existing().unlockedStars &&
+                       (incoming().unlockedStars - existing().unlockedStars) <= 50 &&
+                       incoming().songsCompleted >= existing().songsCompleted &&
+                       (incoming().songsCompleted - existing().songsCompleted) <= 50 &&
+                       (incoming().rewardStreak - existing().rewardStreak) <= 5 &&
                        (
                          // Ação 1: Sincronização de progresso, inventário, personalização e configurações
                          incoming().diff(existing()).affectedKeys().hasOnly([
@@ -180,6 +191,7 @@ service cloud.firestore {
                            'unlockedCosmetics', 'achievementsUnlocked', 'customRocker',
                            'glassAdaptiveEnabled', 'audioLatencyOffsetMs', 'controlMode',
                            'graphicsQuality', 'rewardStreak', 'lastRewardDayKey',
+                           'dailyRewardWeekKey', 'dailyRewardWeeklyCoinsClaimed',
                            'schemaVersion', 'syncRevision', 'studioProfileJson', 'updatedAt'
                          ])
                        );
@@ -229,7 +241,7 @@ service cloud.firestore {
                        isValidNicknameKey(normalizedNickname) &&
                        incoming().keys().hasAll(['userId', 'nickname', 'createdAt']) &&
                        incoming().keys().hasOnly(['userId', 'nickname', 'createdAt']) &&
-                       isValidNicknameClaim(incoming());
+                       isValidNicknameClaim(incoming(), normalizedNickname);
       allow update: if false;
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
@@ -257,6 +269,7 @@ service cloud.firestore {
              data.memberUids[0] is string && data.hostUid in data.memberUids &&
              data.winnerUid is string && data.winnerUid.size() <= 128 &&
              (!('inviteMessage' in data) || (data.inviteMessage is string && data.inviteMessage.size() <= 160)) &&
+             (!('strikeEnabled' in data) || data.strikeEnabled is bool) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -295,7 +308,7 @@ service cloud.firestore {
                        incoming().keys().hasOnly([
                          'roomCode', 'hostUid', 'hostNickname', 'mode', 'status',
                          'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
-                         'winnerUid', 'inviteMessage', 'createdAt', 'updatedAt'
+                         'winnerUid', 'inviteMessage', 'strikeEnabled', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidMultiplayerRoom(incoming(), roomCode);
 
@@ -306,13 +319,17 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        isValidMultiplayerRoom(incoming(), roomCode) &&
                        (
-                         // Ação 1: Host atualiza modo, faixa, início ou encerramento da sala
+                         // Ação 1: Host atualiza modo, faixa, início ou encerramento da sala (Strike travado fora de WAITING)
                          (
                            incoming().hostUid == existing().hostUid &&
                            existing().hostUid == request.auth.uid &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
-                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'updatedAt'
-                           ])
+                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'strikeEnabled', 'updatedAt'
+                           ]) &&
+                           (
+                             !('strikeEnabled' in incoming().diff(existing()).affectedKeys()) ||
+                             (existing().status == 'WAITING' && incoming().status == 'WAITING')
+                           )
                          ) ||
                          // Ação 2: Convidado entra na sala em espera respeitando limite
                          (

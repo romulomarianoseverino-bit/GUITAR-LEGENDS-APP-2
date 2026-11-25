@@ -32,9 +32,16 @@ import com.example.guitarlegends.viewmodel.GameViewModel
 
 @Composable
 fun MusicLibraryScreen(viewModel: GameViewModel) {
+    var showPlaylistsTab by remember { mutableStateOf(false) }
+    var openedPlaylistId by remember { mutableStateOf<String?>(null) }
+
     BackHandler {
-        viewModel.stopPreview()
-        viewModel.navigateBack()
+        if (showPlaylistsTab && openedPlaylistId != null) {
+            openedPlaylistId = null
+        } else {
+            viewModel.stopPreview()
+            viewModel.navigateBack()
+        }
     }
 
     val stats by viewModel.playerStats.collectAsState()
@@ -50,7 +57,6 @@ fun MusicLibraryScreen(viewModel: GameViewModel) {
     val previewPosMs by viewModel.previewPositionMs.collectAsState()
     val previewDurMs by viewModel.previewDurationMs.collectAsState()
 
-    var showPlaylistsTab by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
     var playlistToRename by remember { mutableStateOf<Playlist?>(null) }
     var renameBuffer by remember { mutableStateOf("") }
@@ -383,7 +389,10 @@ fun MusicLibraryScreen(viewModel: GameViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
-                        onClick = { showPlaylistsTab = false },
+                        onClick = {
+                            showPlaylistsTab = false
+                            openedPlaylistId = null
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (!showPlaylistsTab) RockAccentGold else Color(0x22FFFFFF),
                             contentColor = if (!showPlaylistsTab) Color.Black else Color.White
@@ -487,154 +496,289 @@ fun MusicLibraryScreen(viewModel: GameViewModel) {
                         }
                     }
                 } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = newPlaylistName,
-                            onValueChange = { newPlaylistName = it.take(40) },
-                            placeholder = { Text("Nome da playlist / setlist...", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f)) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f).testTag("playlist_name_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = RockAccentGold,
-                                unfocusedBorderColor = RockCardBorder
-                            )
-                        )
-                        Button(
-                            onClick = {
-                                viewModel.createPlaylist(newPlaylistName)
-                                newPlaylistName = ""
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = RockAccentCyan),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.height(48.dp).testTag("create_playlist_button")
-                        ) {
-                            Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("CRIAR", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
+                    val openedPl = openedPlaylistId?.let { id -> playlists.find { it.id == id } }
+                    LaunchedEffect(openedPlaylistId, playlists) {
+                        if (openedPlaylistId != null && openedPl == null) {
+                            openedPlaylistId = null
                         }
                     }
 
-                    if (playlists.isEmpty()) {
-                        Surface(
-                            color = RockDarkCard,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth()
+                    if (openedPl == null) {
+                        // Visão Raiz das Pastas de Playlists
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Crie playlists personalizadas para tocar suas faixas em sequência ou modo aleatório.",
-                                color = Color.White.copy(alpha = 0.72f),
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(14.dp)
+                            OutlinedTextField(
+                                value = newPlaylistName,
+                                onValueChange = { newPlaylistName = it.take(40) },
+                                placeholder = { Text("Nome da pasta / playlist...", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f)) },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("playlist_name_input"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = RockAccentGold,
+                                    unfocusedBorderColor = RockCardBorder
+                                )
                             )
+                            Button(
+                                onClick = {
+                                    viewModel.createPlaylist(newPlaylistName)
+                                    newPlaylistName = ""
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = RockAccentCyan),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.height(48.dp).testTag("create_playlist_button")
+                            ) {
+                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("CRIAR", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
+                            }
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(playlists, key = { it.id }) { pl ->
-                                val resolvedTracks = pl.trackIds.mapNotNull { tid -> tracks.find { it.id == tid } }
-                                val hasSelected = pl.trackIds.contains(selected.id)
-                                Card(
-                                    modifier = Modifier.fillMaxWidth().testTag("playlist_card_${pl.id}"),
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = CardDefaults.cardColors(containerColor = RockDarkCard)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+
+                        if (playlists.isEmpty()) {
+                            Surface(
+                                color = RockDarkCard,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "Crie pastas de playlists personalizadas para organizar suas faixas e tocar em sequência ou modo aleatório.",
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize().testTag("playlists_folder_list"),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(playlists, key = { it.id }) { pl ->
+                                    val resolvedTracks = pl.trackIds.mapNotNull { tid -> tracks.find { it.id == tid } }
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { openedPlaylistId = pl.id }
+                                            .testTag("playlist_card_${pl.id}"),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = CardDefaults.cardColors(containerColor = RockDarkCard),
+                                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                                            brush = Brush.horizontalGradient(listOf(RockAccentGold.copy(alpha = 0.65f), RockCardBorder))
+                                        )
                                     ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(pl.name, color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1)
-                                                Text("${resolvedTracks.size} faixa(s) na fila", color = RockAccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                            Row {
-                                                IconButton(
-                                                    onClick = {
-                                                        renameBuffer = pl.name
-                                                        playlistToRename = pl
-                                                    },
-                                                    modifier = Modifier.size(30.dp).testTag("rename_playlist_${pl.id}")
-                                                ) {
-                                                    Icon(Icons.Default.Edit, contentDescription = "Renomear", tint = RockAccentGold, modifier = Modifier.size(16.dp))
-                                                }
-                                                IconButton(
-                                                    onClick = { viewModel.deletePlaylist(pl.id) },
-                                                    modifier = Modifier.size(30.dp).testTag("delete_playlist_${pl.id}")
-                                                ) {
-                                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Excluir Playlist", tint = RockAccentRed, modifier = Modifier.size(16.dp))
-                                                }
-                                            }
-                                        }
-
-                                        if (!hasSelected) {
-                                            OutlinedButton(
-                                                onClick = { viewModel.addTrackToPlaylist(pl.id, selected.id) },
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                modifier = Modifier.fillMaxWidth().height(30.dp).testTag("add_selected_track_to_playlist_${pl.id}")
-                                            ) {
-                                                Text("+ ADICIONAR '${selected.title.uppercase()}'", color = RockAccentGold, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                                            }
-                                        }
-
-                                        resolvedTracks.forEach { t ->
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text(
-                                                    text = "• ${t.title}",
-                                                    color = Color.White.copy(alpha = 0.82f),
-                                                    fontSize = 10.sp,
-                                                    maxLines = 1,
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                     modifier = Modifier.weight(1f)
-                                                )
-                                                IconButton(
-                                                    onClick = { viewModel.removeTrackFromPlaylist(pl.id, t.id) },
-                                                    modifier = Modifier.size(24.dp).testTag("remove_track_${pl.id}_${t.id}")
                                                 ) {
-                                                    Icon(Icons.Default.Close, contentDescription = "Remover faixa", tint = Color.Gray, modifier = Modifier.size(13.dp))
+                                                    Icon(
+                                                        imageVector = Icons.Default.Folder,
+                                                        contentDescription = "Pasta de Playlist",
+                                                        tint = RockAccentGold,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                    Column {
+                                                        Text(pl.name, color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1)
+                                                        Text("${resolvedTracks.size} música(s) nesta pasta", color = RockAccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    IconButton(
+                                                        onClick = {
+                                                            renameBuffer = pl.name
+                                                            playlistToRename = pl
+                                                        },
+                                                        modifier = Modifier.size(34.dp).testTag("rename_playlist_${pl.id}")
+                                                    ) {
+                                                        Icon(Icons.Default.Edit, contentDescription = "Renomear", tint = RockAccentGold, modifier = Modifier.size(16.dp))
+                                                    }
+                                                    IconButton(
+                                                        onClick = { viewModel.deletePlaylist(pl.id) },
+                                                        modifier = Modifier.size(34.dp).testTag("delete_playlist_${pl.id}")
+                                                    ) {
+                                                        Icon(Icons.Default.DeleteOutline, contentDescription = "Excluir Playlist", tint = RockAccentRed, modifier = Modifier.size(16.dp))
+                                                    }
+                                                }
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Button(
+                                                    onClick = { openedPlaylistId = pl.id },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier.weight(1f).height(34.dp).testTag("open_playlist_${pl.id}")
+                                                ) {
+                                                    Text("ABRIR PASTA", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
+                                                }
+                                                Button(
+                                                    onClick = { viewModel.startPlaylistPlayback(pl.id, shuffle = false) },
+                                                    enabled = resolvedTracks.isNotEmpty(),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = RockAccentGreen),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier.weight(1f).height(34.dp).testTag("play_playlist_seq_${pl.id}")
+                                                ) {
+                                                    Text("SEQUÊNCIA ▶", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
+                                                }
+                                                Button(
+                                                    onClick = { viewModel.startPlaylistPlayback(pl.id, shuffle = true) },
+                                                    enabled = resolvedTracks.isNotEmpty(),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = RockAccentCyan),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier.weight(1f).height(34.dp).testTag("play_playlist_shuffle_${pl.id}")
+                                                ) {
+                                                    Text("ALEATÓRIO 🔀", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Visão Interna da Pasta de Playlist Aberta (exibe APENAS músicas pertencentes a esta pasta)
+                        val folderTracks = openedPl.trackIds.mapNotNull { tid -> tracks.find { it.id == tid } }
+                        val hasSelected = openedPl.trackIds.contains(selected.id)
 
+                        Surface(
+                            color = RockDarkCard,
+                            shape = RoundedCornerShape(12.dp),
+                            border = ButtonDefaults.outlinedButtonBorder.copy(
+                                brush = Brush.horizontalGradient(listOf(RockAccentGold, RockAccentCyan))
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                                .testTag("opened_playlist_header_${openedPl.id}")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    TextButton(
+                                        onClick = { openedPlaylistId = null },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(32.dp).testTag("close_playlist_folder_button")
+                                    ) {
+                                        Icon(Icons.Default.ArrowBack, contentDescription = "Voltar às pastas", tint = RockAccentCyan, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("PASTAS", color = RockAccentCyan, fontWeight = FontWeight.Black, fontSize = 10.sp)
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Icon(Icons.Default.FolderOpen, contentDescription = null, tint = RockAccentGold, modifier = Modifier.size(16.dp))
+                                        Text(openedPl.name, color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1)
+                                    }
+                                    Text("${folderTracks.size} faixas", color = RockAccentGold, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Button(
+                                        onClick = { viewModel.startPlaylistPlayback(openedPl.id, shuffle = false) },
+                                        enabled = folderTracks.isNotEmpty(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = RockAccentGreen),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.weight(1f).height(34.dp).testTag("play_playlist_seq_${openedPl.id}")
+                                    ) {
+                                        Text("SEQUÊNCIA ▶", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
+                                    }
+                                    Button(
+                                        onClick = { viewModel.startPlaylistPlayback(openedPl.id, shuffle = true) },
+                                        enabled = folderTracks.isNotEmpty(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = RockAccentCyan),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.weight(1f).height(34.dp).testTag("play_playlist_shuffle_${openedPl.id}")
+                                    ) {
+                                        Text("ALEATÓRIO 🔀", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
+                                    }
+                                }
+
+                                if (!hasSelected) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.addTrackToPlaylist(openedPl.id, selected.id) },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.fillMaxWidth().height(32.dp).testTag("add_selected_track_to_playlist_${openedPl.id}")
+                                    ) {
+                                        Text("+ ADICIONAR '${selected.title.uppercase()}' A ESTA PASTA", color = RockAccentGold, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize().testTag("playlist_folder_tracks_list_${openedPl.id}"),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (folderTracks.isEmpty()) {
+                                item {
+                                    Surface(
+                                        color = RockDarkCard,
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "Esta pasta está vazia. Selecione uma faixa à direita ou use o botão acima para adicionar (sem duplicatas).",
+                                            color = Color.White.copy(alpha = 0.72f),
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(14.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                items(folderTracks, key = { it.id }) { t ->
+                                    val isSel = t.id == selected.id
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.selectTrack(t) }
+                                            .testTag("folder_track_${openedPl.id}_${t.id}"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSel) Color(0xFF2B1A4A) else RockDarkCard
+                                        )
+                                    ) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Button(
-                                                onClick = { viewModel.startPlaylistPlayback(pl.id, shuffle = false) },
-                                                enabled = resolvedTracks.isNotEmpty(),
-                                                colors = ButtonDefaults.buttonColors(containerColor = RockAccentGreen),
-                                                shape = RoundedCornerShape(8.dp),
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                                modifier = Modifier.weight(1f).height(32.dp).testTag("play_playlist_seq_${pl.id}")
-                                            ) {
-                                                Text("SEQUÊNCIA ▶", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(t.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                                                Text("${t.artist} • ${formatTime(t.durationMs)}", color = RockAccentCyan, fontSize = 9.sp, maxLines = 1)
                                             }
-                                            Button(
-                                                onClick = { viewModel.startPlaylistPlayback(pl.id, shuffle = true) },
-                                                enabled = resolvedTracks.isNotEmpty(),
-                                                colors = ButtonDefaults.buttonColors(containerColor = RockAccentCyan),
-                                                shape = RoundedCornerShape(8.dp),
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                                modifier = Modifier.weight(1f).height(32.dp).testTag("play_playlist_shuffle_${pl.id}")
+                                            IconButton(
+                                                onClick = { viewModel.removeTrackFromPlaylist(openedPl.id, t.id) },
+                                                modifier = Modifier.size(30.dp).testTag("remove_track_${openedPl.id}_${t.id}")
                                             ) {
-                                                Text("ALEATÓRIO 🔀", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp)
+                                                Icon(Icons.Default.Close, contentDescription = "Remover da pasta", tint = RockAccentRed, modifier = Modifier.size(16.dp))
                                             }
                                         }
                                     }

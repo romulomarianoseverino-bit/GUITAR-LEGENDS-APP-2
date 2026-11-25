@@ -105,6 +105,14 @@
         "lastRewardDayKey": {
           "type": "string"
         },
+        "dailyRewardWeekKey": {
+          "type": "string",
+          "description": "Chave UTC da segunda-feira inicial da semana para controle do teto semanal de recompensas diárias."
+        },
+        "dailyRewardWeeklyCoinsClaimed": {
+          "type": "integer",
+          "description": "Moedas já resgatadas por recompensa diária nesta semana UTC (máximo 100)."
+        },
         "schemaVersion": {
           "type": "integer"
         },
@@ -343,6 +351,7 @@
         "memberUids": { "type": "array" },
         "winnerUid": { "type": "string" },
         "inviteMessage": { "type": "string" },
+        "strikeEnabled": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

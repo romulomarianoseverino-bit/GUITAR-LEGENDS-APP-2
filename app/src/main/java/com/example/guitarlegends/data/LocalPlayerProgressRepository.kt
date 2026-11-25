@@ -5,6 +5,10 @@ import com.example.guitarlegends.model.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 
 data class LocalMatchRecord(
@@ -142,7 +146,8 @@ class LocalPlayerProgressRepository(private val context: Context) {
 
     fun claimGuestDailyReward(
         todayKey: String,
-        yesterdayKey: String
+        yesterdayKey: String,
+        currentWeekKey: String = utcWeekStartKey()
     ): Result<Pair<LocalRewardRecord, LocalProgressSnapshot>> {
         val current = loadSnapshot()
         if (current.stats.lastRewardDayKey == todayKey ||
@@ -161,6 +166,15 @@ class LocalPlayerProgressRepository(private val context: Context) {
         val dayNumber = ((newStreak - 1) % 30) + 1
         val rewardDef = DailyRewardCatalog.rewardForDay(dayNumber)
 
+        val sameWeek = current.stats.dailyRewardWeekKey == currentWeekKey
+        val weeklyUsed = if (sameWeek) {
+            current.stats.dailyRewardWeeklyCoinsClaimed.coerceIn(0, DailyRewardCatalog.WEEKLY_REWARD_CAP)
+        } else {
+            0
+        }
+        val remainingCap = (DailyRewardCatalog.WEEKLY_REWARD_CAP - weeklyUsed).coerceAtLeast(0)
+        val coinsGranted = minOf(rewardDef.coinsGranted, remainingCap)
+
         val updatedCosmetics = buildList {
             addAll(current.stats.unlockedCosmetics)
             if (rewardDef.cosmeticId.isNotBlank()) add(rewardDef.cosmeticId)
@@ -172,11 +186,13 @@ class LocalPlayerProgressRepository(private val context: Context) {
         }.distinct()
 
         val updatedStats = current.stats.copy(
-            coins = current.stats.coins + rewardDef.coinsGranted,
+            coins = current.stats.coins + coinsGranted,
             unlockedCosmetics = updatedCosmetics,
             achievementsUnlocked = updatedAchievements,
             rewardStreak = newStreak,
-            lastRewardDayKey = todayKey
+            lastRewardDayKey = todayKey,
+            dailyRewardWeekKey = currentWeekKey,
+            dailyRewardWeeklyCoinsClaimed = weeklyUsed + coinsGranted
         )
 
         val record = LocalRewardRecord(
@@ -185,7 +201,7 @@ class LocalPlayerProgressRepository(private val context: Context) {
             streakCount = newStreak,
             rewardTitle = rewardDef.title,
             rewardType = rewardDef.rewardType,
-            coinsGranted = rewardDef.coinsGranted,
+            coinsGranted = coinsGranted,
             cosmeticId = rewardDef.cosmeticId
         )
 
@@ -200,6 +216,24 @@ class LocalPlayerProgressRepository(private val context: Context) {
 
     companion object {
         private val BASELINE_DEFAULT_STATS = PlayerStats()
+
+        fun utcWeekStartKey(nowMillis: Long = System.currentTimeMillis()): String {
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                timeInMillis = nowMillis
+                firstDayOfWeek = Calendar.MONDAY
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                val dayOfWeek = get(Calendar.DAY_OF_WEEK)
+                val diffFromMonday = (dayOfWeek - Calendar.MONDAY + 7) % 7
+                add(Calendar.DAY_OF_YEAR, -diffFromMonday)
+            }
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            return sdf.format(cal.time)
+        }
 
         /**
          * Mescla o progresso obtido no modo visitante com uma conta existente na nuvem
@@ -216,6 +250,14 @@ class LocalPlayerProgressRepository(private val context: Context) {
             val extraGuestStars = (guest.unlockedStars - BASELINE_DEFAULT_STATS.unlockedStars).coerceAtLeast(0)
             val mergedCosmetics = (cloudStats.unlockedCosmetics + guest.unlockedCosmetics + DEFAULT_UNLOCKED_COSMETICS).distinct()
             val mergedAchievements = (cloudStats.achievementsUnlocked + guest.achievementsUnlocked).distinct()
+            val mergedWeekKey = maxOf(cloudStats.dailyRewardWeekKey, guest.dailyRewardWeekKey)
+            val mergedWeeklyCoins = when {
+                mergedWeekKey.isBlank() -> 0
+                cloudStats.dailyRewardWeekKey == mergedWeekKey && guest.dailyRewardWeekKey == mergedWeekKey ->
+                    maxOf(cloudStats.dailyRewardWeeklyCoinsClaimed, guest.dailyRewardWeeklyCoinsClaimed)
+                cloudStats.dailyRewardWeekKey == mergedWeekKey -> cloudStats.dailyRewardWeeklyCoinsClaimed
+                else -> guest.dailyRewardWeeklyCoinsClaimed
+            }.coerceIn(0, DailyRewardCatalog.WEEKLY_REWARD_CAP)
 
             return cloudStats.copy(
                 coins = (cloudStats.coins + extraGuestCoins).coerceIn(0, 10_000_000),
@@ -229,6 +271,8 @@ class LocalPlayerProgressRepository(private val context: Context) {
                 careerStageMax = maxOf(cloudStats.careerStageMax, guest.careerStageMax),
                 rewardStreak = maxOf(cloudStats.rewardStreak, guest.rewardStreak),
                 lastRewardDayKey = maxOf(cloudStats.lastRewardDayKey, guest.lastRewardDayKey),
+                dailyRewardWeekKey = mergedWeekKey,
+                dailyRewardWeeklyCoinsClaimed = mergedWeeklyCoins,
                 unlockedCosmetics = mergedCosmetics,
                 achievementsUnlocked = mergedAchievements,
                 selectedCharacterId = if (guestSnapshot.hasLocalCustomizationChanges) guest.selectedCharacterId else cloudStats.selectedCharacterId,
@@ -280,6 +324,8 @@ class LocalPlayerProgressRepository(private val context: Context) {
         put("careerStageMax", s.careerStageMax)
         put("rewardStreak", s.rewardStreak)
         put("lastRewardDayKey", s.lastRewardDayKey)
+        put("dailyRewardWeekKey", s.dailyRewardWeekKey)
+        put("dailyRewardWeeklyCoinsClaimed", s.dailyRewardWeeklyCoinsClaimed)
         put("schemaVersion", s.schemaVersion)
         put("syncRevision", s.syncRevision)
         put("customRocker", JSONObject().apply {
@@ -351,6 +397,9 @@ class LocalPlayerProgressRepository(private val context: Context) {
             careerStageMax = o.optInt("careerStageMax", defaults.careerStageMax),
             rewardStreak = o.optInt("rewardStreak", defaults.rewardStreak),
             lastRewardDayKey = o.optString("lastRewardDayKey", ""),
+            dailyRewardWeekKey = o.optString("dailyRewardWeekKey", ""),
+            dailyRewardWeeklyCoinsClaimed = o.optInt("dailyRewardWeeklyCoinsClaimed", 0)
+                .coerceIn(0, DailyRewardCatalog.WEEKLY_REWARD_CAP),
             schemaVersion = o.optInt("schemaVersion", defaults.schemaVersion),
             syncRevision = o.optLong("syncRevision", defaults.syncRevision),
             studioProfile = StudioProfileJsonCodec.fromJsonObject(o.optJSONObject("studioProfile"))

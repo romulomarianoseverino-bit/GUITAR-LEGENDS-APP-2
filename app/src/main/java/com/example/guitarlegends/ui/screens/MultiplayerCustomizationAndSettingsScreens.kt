@@ -278,19 +278,44 @@ fun SettingsScreen(viewModel: GameViewModel) {
                         }
                     }
 
-                    VolumeMixerSlider("Volume Geral (Master)", audio.masterVolume, "audio_slider_master") {
+                    DualVolumeControlRow(
+                        label = "Volume geral",
+                        value = audio.masterVolume,
+                        sliderTestTag = "audio_slider_master",
+                        inputTestTag = "audio_input_master"
+                    ) {
                         viewModel.updateAudioSettings(audio.copy(masterVolume = it))
                     }
-                    VolumeMixerSlider("Volume das Músicas", audio.musicVolume, "audio_slider_music") {
+                    DualVolumeControlRow(
+                        label = "Música",
+                        value = audio.musicVolume,
+                        sliderTestTag = "audio_slider_music",
+                        inputTestTag = "audio_input_music"
+                    ) {
                         viewModel.updateAudioSettings(audio.copy(musicVolume = it))
                     }
-                    VolumeMixerSlider("Efeitos de Gameplay (Notas/Baqueta)", audio.gameplaySfxVolume, "audio_slider_gameplay_sfx") {
+                    DualVolumeControlRow(
+                        label = "Efeitos sonoros",
+                        value = audio.gameplaySfxVolume,
+                        sliderTestTag = "audio_slider_gameplay_sfx",
+                        inputTestTag = "audio_input_gameplay_sfx"
+                    ) {
                         viewModel.updateAudioSettings(audio.copy(gameplaySfxVolume = it))
                     }
-                    VolumeMixerSlider("Efeitos de Interface & Menus", audio.uiSfxVolume, "audio_slider_ui_sfx") {
+                    DualVolumeControlRow(
+                        label = "Interface",
+                        value = audio.uiSfxVolume,
+                        sliderTestTag = "audio_slider_ui_sfx",
+                        inputTestTag = "audio_input_ui_sfx"
+                    ) {
                         viewModel.updateAudioSettings(audio.copy(uiSfxVolume = it))
                     }
-                    VolumeMixerSlider("Ambiente, Público & Palco", audio.stageFxVolume, "audio_slider_stage_fx") {
+                    DualVolumeControlRow(
+                        label = "Ambiente, palco e plateia",
+                        value = audio.stageFxVolume,
+                        sliderTestTag = "audio_slider_stage_fx",
+                        inputTestTag = "audio_input_stage_fx"
+                    ) {
                         viewModel.updateAudioSettings(audio.copy(stageFxVolume = it))
                     }
 
@@ -738,27 +763,5 @@ fun SplashScreen(viewModel: GameViewModel) {
                 contentColor = Color.Black
             )
         }
-    }
-}
-
-@Composable
-private fun VolumeMixerSlider(
-    label: String,
-    value: Float,
-    testTag: String,
-    onValueChange: (Float) -> Unit
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(text = label, color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text(text = "${(value * 100).toInt()}%", color = RockAccentGold, fontSize = 10.sp, fontWeight = FontWeight.Black)
-        }
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = 0f..1f,
-            colors = SliderDefaults.colors(thumbColor = RockAccentCyan, activeTrackColor = RockAccentCyan),
-            modifier = Modifier.height(26.dp).testTag(testTag)
-        )
     }
 }

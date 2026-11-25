@@ -65,9 +65,9 @@ enum class HighwayTheme(
     PS2_WOOD_STEEL(
         "theme_ps2_wood",
         "Clássico PS2 (Madeira & Aço)",
-        "Visual nostálgico dos anos 2000, madeira polida, trilhos cromados e chamas sutis",
-        0xFFFF8F00,
-        listOf(0xFF1E1428, 0xFF2A1C38, 0xFF35254A, 0xFF1C1329)
+        "Visual nostálgico dos anos 2000, esteira roxo-índigo clássica com bordas douradas metálicas",
+        0xFFD4AF37,
+        listOf(0xFF191128, 0xFF231838, 0xFF2B2040, 0xFF160E28)
     ),
     NEON_CYBER_OVERDRIVE(
         "theme_neon_cyber",
@@ -106,6 +106,7 @@ data class InstrumentGear(
 val DEFAULT_UNLOCKED_COSMETICS = listOf(
     "axel_rocker",
     "roxie_riot",
+    "luan_santana",
     "flame_caster",
     "void_v",
     "violao_nylon_classico",
@@ -155,6 +156,8 @@ data class PlayerStats(
     val careerStageMax: Int = 1,
     val rewardStreak: Int = 0,
     val lastRewardDayKey: String = "",
+    val dailyRewardWeekKey: String = "",
+    val dailyRewardWeeklyCoinsClaimed: Int = 0,
     val schemaVersion: Int = 3,
     val syncRevision: Long = 1L,
     val studioProfile: StudioProfileConfig = StudioProfileConfig()

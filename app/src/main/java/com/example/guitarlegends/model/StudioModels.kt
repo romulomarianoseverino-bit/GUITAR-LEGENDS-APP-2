@@ -427,7 +427,7 @@ object StudioCatalog {
                 selectedCharacterId = "custom_rocker",
                 customRocker = rocker.copy(bodyTattoos = "Tatuagem Raio Carmesim")
             )
-            "axel_rocker", "roxie_riot", "kai_cyber" -> base.copy(selectedCharacterId = cosmeticId)
+            "axel_rocker", "roxie_riot", "kai_cyber", "luan_santana" -> base.copy(selectedCharacterId = cosmeticId)
             "flame_caster", "void_v", "neon_thunder" -> base.copy(selectedGuitarId = cosmeticId)
             "violao_nylon_classico", "violao_aco_folk", "violao_eletro_cutaway" ->
                 base.copy(

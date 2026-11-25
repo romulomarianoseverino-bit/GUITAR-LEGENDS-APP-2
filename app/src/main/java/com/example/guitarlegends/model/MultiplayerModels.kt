@@ -41,6 +41,7 @@ data class MultiplayerRoomCloud(
     val memberUids: List<String> = emptyList(),
     val winnerUid: String = "",
     val inviteMessage: String = "",
+    val strikeEnabled: Boolean = true,
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     @ServerTimestamp
@@ -64,6 +65,7 @@ data class MultiplayerRoomCloud(
         "memberUids" to memberUids.distinct().take(4),
         "winnerUid" to winnerUid.take(128),
         "inviteMessage" to inviteMessage.take(160),
+        "strikeEnabled" to strikeEnabled,
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )

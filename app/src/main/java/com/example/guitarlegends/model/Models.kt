@@ -114,7 +114,11 @@ data class Note(
     val durationMs: Long = 0L,
     val isStarPower: Boolean = false,
     var isHit: Boolean = false,
-    var isMissed: Boolean = false
+    var isMissed: Boolean = false,
+    var isSustaining: Boolean = false,
+    var sustainBroken: Boolean = false,
+    var sustainCompleted: Boolean = false,
+    var lastSustainTickMs: Long = 0L
 )
 
 data class Track(

@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -35,11 +37,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.example.R
+import com.example.guitarlegends.analysis.AudioAnalyzer
 import com.example.guitarlegends.engine.LaneColors
+import com.example.guitarlegends.engine.drawDualMultiplayerHighways
 import com.example.guitarlegends.engine.drawHighway
 import com.example.guitarlegends.model.ControlMode
 import com.example.guitarlegends.model.Instrument
+import com.example.guitarlegends.model.MultiplayerMode
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.GameScreen
 import com.example.guitarlegends.viewmodel.GameViewModel
@@ -63,17 +70,73 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val isStarPowerActive by viewModel.isStarPowerActive.collectAsState()
     val lastHitRating by viewModel.lastHitRating.collectAsState()
     val activeFretLanes by viewModel.activeFretLanes.collectAsState()
+    val activePickFlashes by viewModel.activePickFlashes.collectAsState()
     val isPaused by viewModel.isPaused.collectAsState()
     val stats by viewModel.playerStats.collectAsState()
     val controllerInfo by viewModel.controllerInfo.collectAsState()
     val mpRoom by viewModel.multiplayerRoom.collectAsState()
     val mpParticipants by viewModel.multiplayerParticipants.collectAsState()
     val mpWarning by viewModel.multiplayerConnectionWarning.collectAsState()
+    val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
+    val isLocalMultiplayerMatch by viewModel.isLocalMultiplayerMatch.collectAsState()
+    val mpMode by viewModel.multiplayerMode.collectAsState()
 
     val track = viewModel.selectedTrack
     val difficulty = viewModel.selectedDifficulty
     val instrument = viewModel.selectedInstrument
     val numLanes = difficulty.lanesUsed
+    val strikeEnabled = mpRoom?.strikeEnabled ?: localStrikeEnabled
+    val isDualMultiplayer = mpRoom != null || isLocalMultiplayerMatch
+
+    val selfUid = viewModel.currentMultiplayerUid()
+    val partnerParticipant = mpParticipants.firstOrNull { it.userId != selfUid }
+    val partnerDifficulty = partnerParticipant?.difficultyEnum ?: difficulty
+    val partnerInstrument = partnerParticipant?.instrumentEnum
+        ?: if (instrument == Instrument.GUITAR) Instrument.BASS else Instrument.GUITAR
+    val partnerDisplayName = partnerParticipant?.nickname
+        ?: if (mpMode == MultiplayerMode.BATTLE_1V1) "Rival 1v1" else "Parceiro Banda"
+
+    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, strikeEnabled, isDualMultiplayer) {
+        if (!isDualMultiplayer) emptyList()
+        else {
+            val generated = AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
+            if (strikeEnabled) generated else generated.map { it.copy(isStarPower = false) }
+        }
+    }
+    var partnerScoreLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
+    var partnerComboLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
+    var partnerPressedLanes by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var partnerPickFlashes by remember { mutableStateOf<Map<Int, Long>>(emptyMap()) }
+
+    LaunchedEffect(currentPosMs, isDualMultiplayer, partnerNotes) {
+        if (isDualMultiplayer && partnerNotes.isNotEmpty()) {
+            val nowMs = System.currentTimeMillis()
+            val newlyPressed = mutableSetOf<Int>()
+            val flashes = partnerPickFlashes.filterValues { (nowMs - it) <= 220L }.toMutableMap()
+            var hitCount = 0
+            for (n in partnerNotes) {
+                if (!n.isHit && n.timeMs <= currentPosMs) {
+                    n.isHit = true
+                    flashes[n.lane] = nowMs
+                }
+                if (n.isHit) hitCount++
+                if (currentPosMs in (n.timeMs - 45L)..(n.timeMs + n.durationMs.coerceAtLeast(75L))) {
+                    newlyPressed.add(n.lane)
+                }
+            }
+            partnerPressedLanes = newlyPressed
+            partnerPickFlashes = flashes
+            if (partnerParticipant == null) {
+                partnerScoreLocal = hitCount * 125
+                partnerComboLocal = hitCount
+            }
+        }
+    }
+
+    var showPauseVolumeMixer by remember { mutableStateOf(false) }
+    LaunchedEffect(isPaused) {
+        if (!isPaused) showPauseVolumeMixer = false
+    }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val highwayConfig = stats.studioProfile.highwayConfig
@@ -113,29 +176,66 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 )
         )
 
-        // Center 3D Perspective Highway & Stage Canvas
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        // Center 3D Perspective Highway (or Dual Side-by-Side Multiplayer Highways) & Stage Canvas
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag(if (isDualMultiplayer) "multiplayer_dual_highways_canvas" else "single_highway_canvas")
+        ) {
             val selectedTheme = viewModel.highwayThemes.find { it.id == stats.selectedHighwayThemeId }
                 ?: com.example.guitarlegends.model.HighwayTheme.PS2_WOOD_STEEL
+            val nowWall = System.currentTimeMillis()
 
-            drawHighway(
-                drawScope = this,
-                canvasWidth = size.width,
-                canvasHeight = size.height,
-                currentTimeMs = currentPosMs,
-                notes = activeNotes,
-                difficulty = difficulty,
-                activeFretLanes = activeFretLanes,
-                isStarPowerActive = isStarPowerActive,
-                particleSystem = viewModel.particleSystem,
-                highwayTheme = selectedTheme,
-                rockMeter = rockMeter,
-                combo = combo,
-                instrument = instrument,
-                playerStats = stats,
-                highwayOverlayBitmap = highwayOverlayBitmap,
-                overlayOpacity = highwayConfig.stampOpacity
-            )
+            if (isDualMultiplayer) {
+                drawDualMultiplayerHighways(
+                    drawScope = this,
+                    canvasWidth = size.width,
+                    canvasHeight = size.height,
+                    currentTimeMs = currentPosMs,
+                    leftNotes = activeNotes,
+                    leftDifficulty = difficulty,
+                    leftActiveLanes = activeFretLanes,
+                    leftPickFlashes = activePickFlashes,
+                    leftStarPowerActive = isStarPowerActive,
+                    rightNotes = partnerNotes,
+                    rightDifficulty = partnerDifficulty,
+                    rightActiveLanes = partnerPressedLanes,
+                    rightPickFlashes = partnerPickFlashes,
+                    rightStarPowerActive = partnerParticipant?.starPowerActive ?: false,
+                    particleSystem = viewModel.particleSystem,
+                    highwayTheme = selectedTheme,
+                    rockMeter = rockMeter,
+                    combo = combo,
+                    instrument = instrument,
+                    playerStats = stats,
+                    highwayOverlayBitmap = highwayOverlayBitmap,
+                    overlayOpacity = highwayConfig.stampOpacity,
+                    strikeEnabled = strikeEnabled,
+                    nowWallMs = nowWall
+                )
+            } else {
+                drawHighway(
+                    drawScope = this,
+                    canvasWidth = size.width,
+                    canvasHeight = size.height,
+                    currentTimeMs = currentPosMs,
+                    notes = activeNotes,
+                    difficulty = difficulty,
+                    activeFretLanes = activeFretLanes,
+                    isStarPowerActive = isStarPowerActive,
+                    particleSystem = viewModel.particleSystem,
+                    highwayTheme = selectedTheme,
+                    rockMeter = rockMeter,
+                    combo = combo,
+                    instrument = instrument,
+                    playerStats = stats,
+                    highwayOverlayBitmap = highwayOverlayBitmap,
+                    overlayOpacity = highwayConfig.stampOpacity,
+                    activePickFlashes = activePickFlashes,
+                    strikeEnabled = strikeEnabled,
+                    nowWallMs = nowWall
+                )
+            }
         }
 
         // Top Left Track & Progress Info
@@ -224,6 +324,24 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 .padding(end = 16.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (!strikeEnabled) {
+                Surface(
+                    color = Color(0xCC2A1A10),
+                    shape = RoundedCornerShape(10.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(listOf(RockAccentGold, Color.Transparent))
+                    ),
+                    modifier = Modifier.padding(end = 8.dp).testTag("strike_disabled_badge")
+                ) {
+                    Text(
+                        text = "SEM STRIKE",
+                        color = RockAccentGold,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
             if (controllerInfo.isConnected) {
                 Surface(
                     color = Color(0xCC112A3A),
@@ -278,15 +396,60 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             }
         }
 
+        // Dual Multiplayer Top Highway Player Headers
+        if (isDualMultiplayer) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth(0.76f)
+                    .padding(top = 46.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Surface(
+                    color = Color(0xCC141026),
+                    shape = RoundedCornerShape(8.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(listOf(RockAccentCyan, Color.Transparent))
+                    ),
+                    modifier = Modifier.testTag("left_player_hud")
+                ) {
+                    Text(
+                        text = "${stats.nickname.ifBlank { "Você" }} • ${difficulty.displayName} • $score pts",
+                        color = RockAccentCyan,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Surface(
+                    color = Color(0xCC141026),
+                    shape = RoundedCornerShape(8.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(listOf(RockAccentGold, Color.Transparent))
+                    ),
+                    modifier = Modifier.testTag("right_player_hud")
+                ) {
+                    val pScore = partnerParticipant?.score ?: partnerScoreLocal
+                    Text(
+                        text = "$partnerDisplayName • ${partnerDifficulty.displayName} • $pScore pts",
+                        color = RockAccentGold,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+
         // Top Center Vocal Pitch Guide Bar when singing Vocals
         if (instrument == Instrument.VOCALS) {
             VocalMelodyPitchBar(
                 currentTimeMs = currentPosMs,
                 activeNotes = activeNotes,
-                isStarPowerActive = isStarPowerActive,
+                isStarPowerActive = strikeEnabled && isStarPowerActive,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 42.dp)
+                    .padding(top = if (isDualMultiplayer) 74.dp else 42.dp)
             )
         }
 
@@ -305,40 +468,42 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 isStarPowerActive = isStarPowerActive
             )
 
-            // Star Power Activator Button
-            val canActivateStarPower = starPowerEnergy >= 0.5f && !isStarPowerActive
-            Button(
-                onClick = { viewModel.activateStarPower() },
-                enabled = canActivateStarPower,
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isStarPowerActive) Color(0xFF00E5FF) else RockAccentCyan,
-                    disabledContainerColor = Color(0x66161028)
-                ),
-                border = ButtonDefaults.outlinedButtonBorder.copy(
-                    brush = Brush.horizontalGradient(
-                        if (canActivateStarPower || isStarPowerActive) listOf(Color.White, RockAccentCyan)
-                        else listOf(Color(0x4400E5FF), Color(0x22FFFFFF))
+            // Star Power Activator Button (exibido apenas quando Strike está ativo)
+            if (strikeEnabled) {
+                val canActivateStarPower = starPowerEnergy >= 0.5f && !isStarPowerActive
+                Button(
+                    onClick = { viewModel.activateStarPower() },
+                    enabled = canActivateStarPower,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isStarPowerActive) Color(0xFF00E5FF) else RockAccentCyan,
+                        disabledContainerColor = Color(0x66161028)
+                    ),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(
+                            if (canActivateStarPower || isStarPowerActive) listOf(Color.White, RockAccentCyan)
+                            else listOf(Color(0x4400E5FF), Color(0x22FFFFFF))
+                        )
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .width(126.dp)
+                        .testTag("star_power_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = if (canActivateStarPower || isStarPowerActive) Color.Black else Color.Gray,
+                        modifier = Modifier.size(16.dp)
                     )
-                ),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                modifier = Modifier
-                    .width(126.dp)
-                    .testTag("star_power_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Bolt,
-                    contentDescription = null,
-                    tint = if (canActivateStarPower || isStarPowerActive) Color.Black else Color.Gray,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(3.dp))
-                Text(
-                    text = if (isStarPowerActive) "ATIVO!" else if (canActivateStarPower) "ESTRELAR!" else "SP ${(starPowerEnergy * 100).toInt()}%",
-                    color = if (canActivateStarPower || isStarPowerActive) Color.Black else Color(0xFF9BE7FF),
-                    fontWeight = FontWeight.Black,
-                    fontSize = 10.sp
-                )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = if (isStarPowerActive) "ATIVO!" else if (canActivateStarPower) "ESTRELAR!" else "SP ${(starPowerEnergy * 100).toInt()}%",
+                        color = if (canActivateStarPower || isStarPowerActive) Color.Black else Color(0xFF9BE7FF),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp
+                    )
+                }
             }
         }
 
@@ -371,166 +536,328 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
 
             AnalogRockMeterWithTubes(
                 rockMeter = rockMeter,
-                starPowerEnergy = starPowerEnergy,
-                isStarPowerActive = isStarPowerActive
+                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
+                isStarPowerActive = strikeEnabled && isStarPowerActive,
+                showStarPowerTubes = strikeEnabled
             )
         }
 
-        // Bottom Controls: Fret Strike Touch Buttons (Multi-touch enabled)
-        Row(
+        // Bottom Controls: Fret Strike Touch Buttons ligados visualmente (o--o--o--o) e adaptados à dificuldade
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(0.84f)
-                .padding(bottom = 12.dp)
+                .align(if (isDualMultiplayer) Alignment.BottomStart else Alignment.BottomCenter)
+                .padding(
+                    start = if (isDualMultiplayer) 16.dp else 0.dp,
+                    bottom = 10.dp
+                )
+                .fillMaxWidth(if (isDualMultiplayer) 0.56f else 0.80f)
                 .height(68.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            contentAlignment = Alignment.Center
         ) {
-            for (lane in 0 until numLanes) {
-                val color = LaneColors[lane]
-                val isPressed = activeFretLanes.contains(lane)
+            // Haste horizontal metálica conectando os botões receptores (o--o--o--o)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.84f)
+                    .height(6.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(Color(0xFF282238), Color(0xFFDDE2EB), Color(0xFF282238))),
+                        RoundedCornerShape(3.dp)
+                    )
+                    .border(1.dp, Color(0xFF14111D), RoundedCornerShape(3.dp))
+            )
 
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(18.dp))
-                        .testTag("fret_touch_button_$lane")
-                        .pointerInteropFilter { motionEvent ->
-                            when (motionEvent.actionMasked) {
-                                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                                    viewModel.onFretDown(lane)
-                                    true
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (lane in 0 until numLanes) {
+                    val color = LaneColors[lane]
+                    val isPressed = activeFretLanes.contains(lane)
+
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .testTag("fret_touch_button_$lane")
+                            .pointerInteropFilter { motionEvent ->
+                                when (motionEvent.actionMasked) {
+                                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                                        viewModel.onFretDown(lane)
+                                        true
+                                    }
+                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                                        viewModel.onFretUp(lane)
+                                        true
+                                    }
+                                    else -> false
                                 }
-                                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                                    viewModel.onFretUp(lane)
-                                    true
-                                }
-                                else -> false
-                            }
-                        },
-                    color = if (isPressed) color else color.copy(alpha = 0.25f),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = Brush.verticalGradient(
-                            listOf(if (isPressed) Color.White else color, color.copy(alpha = 0.5f))
+                            },
+                        color = if (isPressed) color.copy(alpha = 0.85f) else Color(0xCC161026),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                            brush = Brush.verticalGradient(
+                                listOf(Color(0xFFE6EAF2), color, Color(0xFF1A1426))
+                            ),
+                            width = if (isPressed) 4.dp else 3.dp
                         ),
-                        width = if (isPressed) 4.dp else 2.dp
-                    ),
-                    shape = RoundedCornerShape(18.dp)
-                ) {
-                    // Botão visual limpo de traste (sem textos 'PISTA 1', 'PISTA 2', etc.)
-                    Box(contentAlignment = Alignment.Center) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .background(
-                                    color = if (isPressed) Color.White else color.copy(alpha = 0.55f),
-                                    shape = CircleShape
-                                )
-                                .border(
-                                    width = if (isPressed) 3.dp else 2.dp,
-                                    color = if (isPressed) color else Color.White.copy(alpha = 0.7f),
-                                    shape = CircleShape
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        shape = CircleShape
+                    ) {
+                        // Botão circular clássico limpo de traste (sem textos 'PISTA 1..5')
+                        Box(contentAlignment = Alignment.Center) {
                             Box(
                                 modifier = Modifier
-                                    .size(14.dp)
+                                    .size(44.dp)
                                     .background(
-                                        color = if (isPressed) color else Color.White.copy(alpha = 0.85f),
+                                        brush = Brush.radialGradient(
+                                            listOf(
+                                                Color.White.copy(alpha = if (isPressed) 0.98f else 0.72f),
+                                                color.copy(alpha = if (isPressed) 0.98f else 0.85f),
+                                                color.copy(alpha = 0.30f)
+                                            )
+                                        ),
                                         shape = CircleShape
                                     )
-                            )
+                                    .border(
+                                        width = if (isPressed) 3.dp else 2.dp,
+                                        color = if (isPressed) Color.White else Color(0xFFE6EAF2),
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .background(
+                                            color = if (isPressed) Color.White else Color.White.copy(alpha = 0.90f),
+                                            shape = CircleShape
+                                        )
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // Optional Strum bar for Fret+Strum mode
-            if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
-                Button(
-                    onClick = { viewModel.onStrumBar() },
-                    colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .weight(1.2f)
-                        .fillMaxHeight()
-                        .testTag("strum_bar_button")
-                ) {
-                    Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                // Optional Strum bar for Fret+Strum mode
+                if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
+                    Button(
+                        onClick = { viewModel.onStrumBar() },
+                        colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .weight(1.15f)
+                            .fillMaxHeight()
+                            .testTag("strum_bar_button")
+                    ) {
+                        Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 11.sp)
+                    }
                 }
             }
         }
 
-        // Pause Menu Dialog Overlay
+        // Pause Menu Dialog Overlay (Ordem Exata: 1. Continuar, 2. Reiniciar música, 3. Controle de volume, 4. Próxima música, 5. Sair)
         if (isPaused) {
+            val audio = stats.studioProfile.audioSettings
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color(0xCC000000))
-                    .clickable { /* absorb taps */ },
+                    .pointerInput(Unit) { detectTapGestures { /* absorb taps without merging semantics */ } },
                 contentAlignment = Alignment.Center
             ) {
-                Card(
-                    modifier = Modifier
-                        .width(360.dp)
-                        .testTag("pause_dialog"),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = RockDarkCard),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = Brush.verticalGradient(listOf(RockAccentGold, RockCardBorder))
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                if (!showPauseVolumeMixer) {
+                    Card(
+                        modifier = Modifier
+                            .width(360.dp)
+                            .heightIn(max = 376.dp)
+                            .testTag("pause_dialog"),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = RockDarkCard),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                            brush = Brush.verticalGradient(listOf(RockAccentGold, RockCardBorder))
+                        )
                     ) {
-                        Text(
-                            text = "SHOW EM PAUSA",
-                            color = RockAccentGold,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 18.sp,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "${track.title} • ${instrument.displayName}",
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 12.sp
-                        )
+                        Column(
+                            modifier = Modifier
+                                .padding(14.dp)
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "SHOW EM PAUSA",
+                                color = RockAccentGold,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 17.sp,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "${track.title} • ${instrument.displayName}",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 11.sp
+                            )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                            RockButton(
+                                text = "1. CONTINUAR",
+                                onClick = { viewModel.togglePause() },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pause_resume_button",
+                                containerColor = RockAccentGreen,
+                                contentColor = Color.Black
+                            )
 
-                        RockButton(
-                            text = "CONTINUAR SHOW",
-                            onClick = { viewModel.togglePause() },
-                            modifier = Modifier.fillMaxWidth(),
-                            testTag = "pause_resume_button",
-                            containerColor = RockAccentGreen,
-                            contentColor = Color.Black
-                        )
+                            RockButton(
+                                text = "2. REINICIAR MÚSICA",
+                                onClick = { viewModel.restartMatch() },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pause_restart_button",
+                                containerColor = RockAccentCyan,
+                                contentColor = Color.Black
+                            )
 
-                        RockButton(
-                            text = "REINICIAR MÚSICA",
-                            onClick = { viewModel.restartMatch() },
-                            modifier = Modifier.fillMaxWidth(),
-                            testTag = "pause_restart_button",
-                            containerColor = RockAccentCyan,
-                            contentColor = Color.Black
-                        )
+                            RockButton(
+                                text = "3. CONTROLE DE VOLUME",
+                                onClick = { showPauseVolumeMixer = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pause_volume_button",
+                                containerColor = RockAccentGold,
+                                contentColor = Color.Black
+                            )
 
-                        RockButton(
-                            text = "SAIR PARA O MENU",
-                            onClick = {
-                                viewModel.stop()
-                                viewModel.navigateTo(GameScreen.MainMenu)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            testTag = "pause_exit_button",
-                            containerColor = RockAccentRed,
-                            contentColor = Color.White
+                            RockButton(
+                                text = "4. PRÓXIMA MÚSICA",
+                                onClick = { viewModel.playNextTrackFromPause() },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pause_next_track_button",
+                                containerColor = Color(0xFF7C4DFF),
+                                contentColor = Color.White
+                            )
+
+                            RockButton(
+                                text = "5. SAIR",
+                                onClick = {
+                                    viewModel.stop()
+                                    viewModel.navigateTo(GameScreen.MainMenu)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pause_exit_button",
+                                containerColor = RockAccentRed,
+                                contentColor = Color.White
+                            )
+                        }
+                    }
+                } else {
+                    Card(
+                        modifier = Modifier
+                            .width(440.dp)
+                            .heightIn(max = 350.dp)
+                            .testTag("pause_volume_dialog"),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = RockDarkCard),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                            brush = Brush.verticalGradient(listOf(RockAccentCyan, RockCardBorder))
                         )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "CONTROLE DE VOLUME (AO VIVO)",
+                                    color = RockAccentCyan,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 14.sp
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Button(
+                                        onClick = { viewModel.toggleMuteAudio() },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (audio.isMuted) RockAccentRed else Color(0x33FFFFFF)
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(30.dp).testTag("pause_audio_mute_button")
+                                    ) {
+                                        Text(
+                                            text = if (audio.isMuted) "MUDO ON" else "SILENCIAR",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 9.sp
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = { viewModel.resetAudioSettings() },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(30.dp).testTag("pause_audio_reset_button")
+                                    ) {
+                                        Text("PADRÃO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                                    }
+                                }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                DualVolumeControlRow(
+                                    label = "Volume geral",
+                                    value = audio.masterVolume,
+                                    sliderTestTag = "pause_audio_slider_master",
+                                    inputTestTag = "pause_audio_input_master"
+                                ) {
+                                    viewModel.updateAudioSettings(audio.copy(masterVolume = it))
+                                }
+                                DualVolumeControlRow(
+                                    label = "Música",
+                                    value = audio.musicVolume,
+                                    sliderTestTag = "pause_audio_slider_music",
+                                    inputTestTag = "pause_audio_input_music"
+                                ) {
+                                    viewModel.updateAudioSettings(audio.copy(musicVolume = it))
+                                }
+                                DualVolumeControlRow(
+                                    label = "Efeitos sonoros",
+                                    value = audio.gameplaySfxVolume,
+                                    sliderTestTag = "pause_audio_slider_gameplay_sfx",
+                                    inputTestTag = "pause_audio_input_gameplay_sfx"
+                                ) {
+                                    viewModel.updateAudioSettings(audio.copy(gameplaySfxVolume = it))
+                                }
+                                DualVolumeControlRow(
+                                    label = "Interface",
+                                    value = audio.uiSfxVolume,
+                                    sliderTestTag = "pause_audio_slider_ui_sfx",
+                                    inputTestTag = "pause_audio_input_ui_sfx"
+                                ) {
+                                    viewModel.updateAudioSettings(audio.copy(uiSfxVolume = it))
+                                }
+                                DualVolumeControlRow(
+                                    label = "Ambiente, palco e plateia",
+                                    value = audio.stageFxVolume,
+                                    sliderTestTag = "pause_audio_slider_stage_fx",
+                                    inputTestTag = "pause_audio_input_stage_fx"
+                                ) {
+                                    viewModel.updateAudioSettings(audio.copy(stageFxVolume = it))
+                                }
+                            }
+
+                            RockButton(
+                                text = "VOLTAR À PAUSA",
+                                onClick = { showPauseVolumeMixer = false },
+                                modifier = Modifier.fillMaxWidth(),
+                                testTag = "pause_volume_back_button",
+                                containerColor = RockAccentGold,
+                                contentColor = Color.Black
+                            )
+                        }
                     }
                 }
             }
@@ -694,7 +1021,8 @@ private fun GuitarAmpScoreCabinet(
 private fun AnalogRockMeterWithTubes(
     rockMeter: Float,
     starPowerEnergy: Float,
-    isStarPowerActive: Boolean
+    isStarPowerActive: Boolean,
+    showStarPowerTubes: Boolean = true
 ) {
     val animatedRock by animateFloatAsState(
         targetValue = rockMeter.coerceIn(0f, 1f),
@@ -725,45 +1053,47 @@ private fun AnalogRockMeterWithTubes(
                 val dialCenter = Offset(w * 0.5f, h * 0.88f)
                 val dialRadius = w * 0.37f
 
-                // 5 Válvulas radialmente montadas no topo do arco (-48°, -24°, 0°, +24°, +48°)
-                val tubeAngles = listOf(-48f, -24f, 0f, 24f, 48f)
-                tubeAngles.forEachIndexed { idx, deg ->
-                    val threshold = (idx + 1) / 5f
-                    val isFilled = isStarPowerActive || animatedSp >= threshold - 0.08f
-                    val rad = Math.toRadians((deg - 90f).toDouble())
-                    val dist = dialRadius + 16f
-                    val cx = dialCenter.x + (cos(rad) * dist).toFloat()
-                    val cy = dialCenter.y + (sin(rad) * dist).toFloat()
+                if (showStarPowerTubes) {
+                    // 5 Válvulas radialmente montadas no topo do arco (-48°, -24°, 0°, +24°, +48°)
+                    val tubeAngles = listOf(-48f, -24f, 0f, 24f, 48f)
+                    tubeAngles.forEachIndexed { idx, deg ->
+                        val threshold = (idx + 1) / 5f
+                        val isFilled = isStarPowerActive || animatedSp >= threshold - 0.08f
+                        val rad = Math.toRadians((deg - 90f).toDouble())
+                        val dist = dialRadius + 16f
+                        val cx = dialCenter.x + (cos(rad) * dist).toFloat()
+                        val cy = dialCenter.y + (sin(rad) * dist).toFloat()
 
-                    rotate(degrees = deg, pivot = Offset(cx, cy)) {
-                        // Halo ciano quando energizada
-                        if (isFilled) {
-                            drawOval(
-                                color = Color(0x8800E5FF),
-                                topLeft = Offset(cx - 8f, cy - 13f),
-                                size = Size(16f, 24f)
+                        rotate(degrees = deg, pivot = Offset(cx, cy)) {
+                            // Halo ciano quando energizada
+                            if (isFilled) {
+                                drawOval(
+                                    color = Color(0x8800E5FF),
+                                    topLeft = Offset(cx - 8f, cy - 13f),
+                                    size = Size(16f, 24f)
+                                )
+                            }
+                            // Vidro da válvula
+                            drawRoundRect(
+                                color = if (isFilled) Color(0xFF00E5FF) else Color(0xFF1F2733),
+                                topLeft = Offset(cx - 5f, cy - 10f),
+                                size = Size(10f, 18f),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f)
+                            )
+                            // Brilho interno branco
+                            drawRoundRect(
+                                color = if (isFilled) Color.White.copy(alpha = 0.85f) else Color(0x33FFFFFF),
+                                topLeft = Offset(cx - 2f, cy - 7f),
+                                size = Size(3.5f, 11f),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f)
+                            )
+                            // Base metálica da válvula
+                            drawRect(
+                                color = Color(0xFF6B7280),
+                                topLeft = Offset(cx - 5.5f, cy + 5f),
+                                size = Size(11f, 4f)
                             )
                         }
-                        // Vidro da válvula
-                        drawRoundRect(
-                            color = if (isFilled) Color(0xFF00E5FF) else Color(0xFF1F2733),
-                            topLeft = Offset(cx - 5f, cy - 10f),
-                            size = Size(10f, 18f),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f)
-                        )
-                        // Brilho interno branco
-                        drawRoundRect(
-                            color = if (isFilled) Color.White.copy(alpha = 0.85f) else Color(0x33FFFFFF),
-                            topLeft = Offset(cx - 2f, cy - 7f),
-                            size = Size(3.5f, 11f),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f)
-                        )
-                        // Base metálica da válvula
-                        drawRect(
-                            color = Color(0xFF6B7280),
-                            topLeft = Offset(cx - 5.5f, cy + 5f),
-                            size = Size(11f, 4f)
-                        )
                     }
                 }
 

@@ -9,7 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -160,3 +160,96 @@ fun RockButton(
         )
     }
 }
+
+@Composable
+fun DualVolumeControlRow(
+    label: String,
+    value: Float,
+    sliderTestTag: String,
+    inputTestTag: String,
+    onValueChange: (Float) -> Unit
+) {
+    val pct = (value.coerceIn(0f, 1f) * 100f).let { kotlin.math.round(it).toInt() }.coerceIn(0, 100)
+    var textValue by remember { mutableStateOf(pct.toString()) }
+
+    LaunchedEffect(pct) {
+        val parsed = textValue.toIntOrNull()
+        if (parsed != pct && !(textValue.isEmpty() && pct == 0)) {
+            textValue = pct.toString()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                color = Color.White.copy(alpha = 0.9f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = { raw ->
+                        val digits = raw.filter { it.isDigit() }.take(3)
+                        if (digits.isEmpty()) {
+                            textValue = ""
+                            onValueChange(0f)
+                        } else {
+                            val clamped = digits.toInt().coerceIn(0, 100)
+                            textValue = clamped.toString()
+                            onValueChange(clamped / 100f)
+                        }
+                    },
+                    singleLine = true,
+                    textStyle = LocalTextStyle.current.copy(
+                        color = RockAccentGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.End
+                    ),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    suffix = {
+                        Text(
+                            text = "%",
+                            color = RockAccentGold.copy(alpha = 0.8f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = RockAccentGold,
+                        unfocusedBorderColor = RockCardBorder,
+                        focusedContainerColor = Color(0x22000000),
+                        unfocusedContainerColor = Color(0x18000000)
+                    ),
+                    modifier = Modifier
+                        .width(78.dp)
+                        .heightIn(min = 48.dp)
+                        .testTag(inputTestTag)
+                )
+            }
+        }
+        Slider(
+            value = value.coerceIn(0f, 1f),
+            onValueChange = { next ->
+                val clamped = next.coerceIn(0f, 1f)
+                onValueChange(clamped)
+            },
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(thumbColor = RockAccentCyan, activeTrackColor = RockAccentCyan),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(26.dp)
+                .testTag(sliderTestTag)
+        )
+    }
+}
+

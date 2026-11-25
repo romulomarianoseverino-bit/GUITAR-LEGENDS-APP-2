@@ -259,6 +259,11 @@ fun CustomizationScreen(viewModel: GameViewModel) {
                     }
 
                     // Resumo rápido equipado
+                    val activeCharName = when (effectiveStats.selectedCharacterId) {
+                        "custom_rocker" -> effectiveStats.studioProfile.rockerBodyModel
+                        else -> viewModel.characters.find { it.id == effectiveStats.selectedCharacterId }?.name
+                            ?: effectiveStats.studioProfile.rockerBodyModel
+                    }
                     Surface(
                         color = Color(0x18FFFFFF),
                         shape = RoundedCornerShape(10.dp),
@@ -266,7 +271,7 @@ fun CustomizationScreen(viewModel: GameViewModel) {
                     ) {
                         Column(modifier = Modifier.padding(8.dp)) {
                             Text(
-                                text = "${effectiveStats.studioProfile.rockerBodyModel} • ${effectiveStats.studioProfile.stageExpression.label}",
+                                text = "$activeCharName • ${effectiveStats.customRocker.artStyle.displayName}",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 10.sp,
@@ -362,24 +367,123 @@ fun CustomizationScreen(viewModel: GameViewModel) {
                 ) {
                     when (selectedCategory) {
                         0 -> {
-                            // ABA 0: PERSONAGEM 3D COMPLETO + FOTO + GUARDA-ROUPA + SKINS
+                            // ABA 0: PERSONAGEM 3D COMPLETO + VOCALISTA LUAN SANTANA + FOTO + GUARDA-ROUPA + SKINS
+                            item {
+                                StudioSectionCard(title = "INTEGRANTES OFICIAIS & VOCALISTAS 3D", accent = RockAccentCyan) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        CharacterArtStyle.values().forEach { art ->
+                                            val sel = stats.customRocker.artStyle == art
+                                            Button(
+                                                onClick = { viewModel.updateCustomRockerStyle(art) },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = if (sel) Color(art.badgeColorHex).copy(alpha = 0.25f) else Color(0x18FFFFFF)
+                                                ),
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .defaultMinSize(minHeight = 48.dp)
+                                                    .testTag("top_art_style_${art.name.lowercase()}")
+                                            ) {
+                                                Text(art.displayName, color = Color(art.badgeColorHex), fontWeight = FontWeight.Black, fontSize = 8.sp, maxLines = 1)
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    androidx.compose.foundation.lazy.LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(viewModel.characters.size) { index ->
+                                            val character = viewModel.characters[index]
+                                            val isSelected = stats.selectedCharacterId == character.id
+                                            val isUnlocked = viewModel.isCosmeticUnlocked(character.id, character.isUnlocked)
+                                            Surface(
+                                                color = if (isSelected) Color(0xFF2E174D) else Color(0x18FFFFFF),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Column {
+                                                        Text(
+                                                            text = character.name,
+                                                            color = if (isSelected) RockAccentGold else Color.White,
+                                                            fontWeight = FontWeight.Black,
+                                                            fontSize = 9.sp,
+                                                            maxLines = 1
+                                                        )
+                                                        Text(
+                                                            text = character.style,
+                                                            color = RockAccentCyan,
+                                                            fontSize = 8.sp,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                    Button(
+                                                        onClick = {
+                                                            previewingShopItem = null
+                                                            if (isUnlocked) {
+                                                                viewModel.selectCharacter(character.id)
+                                                                if (character.id == "luan_santana") {
+                                                                    instrumentTab = Instrument.VOCALS
+                                                                }
+                                                            } else {
+                                                                viewModel.unlockCharacter(character.id, character.priceCoins)
+                                                            }
+                                                        },
+                                                        enabled = isUnlocked || stats.coins >= character.priceCoins,
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = when {
+                                                                isSelected -> RockAccentGold
+                                                                isUnlocked -> RockAccentCyan
+                                                                else -> RockAccentGold.copy(alpha = 0.85f)
+                                                            },
+                                                            contentColor = Color.Black
+                                                        ),
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                        modifier = Modifier
+                                                            .defaultMinSize(minHeight = 48.dp)
+                                                            .testTag("select_character_${character.id}")
+                                                    ) {
+                                                        Text(
+                                                            text = when {
+                                                                isSelected -> "ATIVO"
+                                                                isUnlocked -> "EQUIPAR"
+                                                                else -> "${character.priceCoins} LC"
+                                                            },
+                                                            fontWeight = FontWeight.Black,
+                                                            fontSize = 8.sp,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             item {
                                 StudioSectionCard(title = "BIOTIPO, TOM DE PELE & EXPRESSÃO NO PALCO", accent = RockAccentGold) {
-                                    Text("MODELO CORPORAL 3D", color = Color.White.copy(alpha = 0.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                    OutfitGridOptions(
-                                        selected = stats.studioProfile.rockerBodyModel,
-                                        options = StudioCatalog.bodyModels
-                                    ) { model ->
-                                        viewModel.updateRockerBodyAndSkin(model, stats.studioProfile.skinToneHex)
-                                    }
-
-                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text("TOM DE PELE", color = Color.White.copy(alpha = 0.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                     ColorPaletteRow(
                                         colors = StudioCatalog.skinTones,
                                         selectedHex = stats.studioProfile.skinToneHex
                                     ) { tone ->
                                         viewModel.updateRockerBodyAndSkin(stats.studioProfile.rockerBodyModel, tone)
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text("MODELO CORPORAL 3D", color = Color.White.copy(alpha = 0.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                    OutfitGridOptions(
+                                        selected = stats.studioProfile.rockerBodyModel,
+                                        options = StudioCatalog.bodyModels
+                                    ) { model ->
+                                        viewModel.updateRockerBodyAndSkin(model, stats.studioProfile.skinToneHex)
                                     }
 
                                     Spacer(modifier = Modifier.height(6.dp))
