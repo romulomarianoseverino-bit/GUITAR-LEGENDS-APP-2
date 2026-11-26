@@ -406,7 +406,7 @@ service cloud.firestore {
                          incoming().keys().hasOnly([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          isValidMultiplayerParticipant(incoming(), roomCode, participantUid);
 
