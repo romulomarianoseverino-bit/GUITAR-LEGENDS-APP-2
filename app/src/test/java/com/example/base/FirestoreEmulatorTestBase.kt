@@ -20,6 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -29,6 +30,7 @@ abstract class FirestoreEmulatorTestBase {
     protected lateinit var firestore: FirebaseFirestore
     protected lateinit var auth: FirebaseAuth
     protected lateinit var databaseId: String
+    protected lateinit var firebaseApp: FirebaseApp
 
     @Before
     open fun setUpFirebase() {
@@ -36,27 +38,26 @@ abstract class FirestoreEmulatorTestBase {
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
         databaseId = if (resId != 0) context.getString(resId) else "demo-database"
 
-        // Reuse the app initialized by the Android application when present, but always
-        // route both SDK clients to the local emulators. Previously the emulator endpoints
-        // were configured only when this test created the FirebaseApp; an existing default
-        // app silently sent Auth requests to the configured Firebase project instead.
-        val app = FirebaseApp.getApps(context).firstOrNull()
-            ?: FirebaseApp.initializeApp(
-                context,
-                FirebaseOptions.Builder()
-                    .setApplicationId("com.aistudio.applet.kpfcic")
-                    .setProjectId(PROJECT_ID)
-                    .setApiKey("fake-api-key-for-emulator")
-                    .build()
-            )
+        // Every emulator test gets an isolated FirebaseApp. Never reuse the Android
+        // application's default app: its Auth/Firestore clients may already be initialized
+        // before useEmulator() is configured.
+        firebaseApp = FirebaseApp.initializeApp(
+            context,
+            FirebaseOptions.Builder()
+                .setApplicationId("com.aistudio.applet.kpfcic")
+                .setProjectId(PROJECT_ID)
+                .setApiKey("fake-api-key-for-emulator")
+                .build(),
+            "guitar-legends-test-${UUID.randomUUID()}"
+        )
 
-        firestore = FirebaseFirestore.getInstance(app, databaseId)
+        firestore = FirebaseFirestore.getInstance(firebaseApp, databaseId)
         firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
         firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
             .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
             .build()
 
-        auth = FirebaseAuth.getInstance(app)
+        auth = FirebaseAuth.getInstance(firebaseApp)
         auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
     }
 
