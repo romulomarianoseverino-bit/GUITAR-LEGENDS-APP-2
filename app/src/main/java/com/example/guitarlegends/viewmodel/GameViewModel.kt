@@ -20,6 +20,7 @@ import com.example.guitarlegends.engine.ParticleSystem
 import com.example.guitarlegends.input.ConnectedControllerInfo
 import com.example.guitarlegends.input.GamepadInputManager
 import com.example.guitarlegends.model.*
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.Job
@@ -61,7 +62,7 @@ sealed class AuthUiState {
     data class Authenticated(val uid: String, val email: String, val nickname: String) : AuthUiState()
 }
 
-class GameViewModel(application: Application) : AndroidViewModel(application) {
+class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) : AndroidViewModel(application) {
 
     private val context: Context = application.applicationContext
     val audioPlayer = AudioPlayerEngine(context)
@@ -85,9 +86,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private var authJob: Job? = null
 
-    private val firebaseAuth: FirebaseAuth? = FirebaseClientProvider.getAuthOrNull(context)
+    private val firebaseAuth: FirebaseAuth? = FirebaseClientProvider.getAuthOrNull(context, firebaseApp)
     private val accountRepo: AccountCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) AccountCloudRepository(db, auth) else null
     }
