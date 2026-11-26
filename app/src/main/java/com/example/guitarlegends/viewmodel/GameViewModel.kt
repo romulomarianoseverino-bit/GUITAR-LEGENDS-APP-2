@@ -2480,25 +2480,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _localStrikeEnabled.value = enabled
             return
         }
-        val uid = multiplayerRepo?.currentUidOrNull()
-        if (room.hostUid != uid) {
-            _multiplayerError.value = "Apenas o anfitrião (${room.hostNickname}) pode alterar o Sistema de Strike."
+        if (room.statusEnum != RoomStatus.WAITING) {
+            _multiplayerError.value = "A decisão sobre Strike fica travada durante a partida."
             return
         }
-        if (room.statusEnum == RoomStatus.PLAYING) {
-            _multiplayerError.value = "O Sistema de Strike fica travado durante a partida."
-            return
-        }
-        _localStrikeEnabled.value = enabled
+        val repo = multiplayerRepo ?: return
         viewModelScope.launch {
-            multiplayerRepo.updateRoomHostConfig(
-                roomCode = room.roomCode,
-                mode = _multiplayerMode.value,
-                track = selectedTrack,
-                strikeEnabled = enabled
-            ).onFailure { err ->
-                _multiplayerError.value = err.message ?: "Falha ao atualizar o Sistema de Strike."
-            }
+            repo.updateParticipantStrikeConsent(room.roomCode, enabled)
+                .onFailure { err ->
+                    _multiplayerError.value = err.message ?: "Falha ao registrar sua decisão sobre Strike."
+                }
         }
     }
 
@@ -2551,7 +2542,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 nickname = effectiveMultiplayerNickname(),
                 instrument = selectedInstrument,
                 difficulty = selectedDifficulty,
-                strikeEnabled = _localStrikeEnabled.value,
+                strikeEnabled = false,
                 customRoomCode = customRoomCode
             )
             res.onSuccess { room ->
@@ -2652,12 +2643,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _multiplayerError.value = "Aguarde pelo menos 1 outro jogador entrar na sala '${room.roomCode}' (ou compartilhe o código)."
             return
         }
+        val undecidedStrike = participants.filter { it.strikeConsent == null }
+        if (undecidedStrike.isNotEmpty()) {
+            val names = undecidedStrike.joinToString { it.nickname }
+            _multiplayerError.value = "Aguardando a decisão de Strike de: $names. Cada jogador precisa escolher COM ou SEM STRIKE."
+            return
+        }
         val unreadyGuests = participants.filter { it.userId != uid && !it.ready }
         if (unreadyGuests.isNotEmpty()) {
             val names = unreadyGuests.joinToString { it.nickname }
             _multiplayerError.value = "Aguardando confirmação PRONTO de: $names."
             return
         }
+        val strikeConsensus = participants.isNotEmpty() && participants.all { it.strikeConsent == true }
 
         viewModelScope.launch {
             _isMultiplayerBusy.value = true
@@ -2674,7 +2672,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 mode = _multiplayerMode.value,
                 track = selectedTrack,
                 status = RoomStatus.PLAYING,
-                winnerUid = ""
+                winnerUid = "",
+                strikeEnabled = strikeConsensus
             )
             res.onFailure { err ->
                 _multiplayerError.value = err.message ?: "Não foi possível iniciar a partida online."
