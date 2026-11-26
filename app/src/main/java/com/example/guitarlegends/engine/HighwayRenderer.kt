@@ -96,6 +96,54 @@ class ParticleSystem {
  * - Suporte a notas sustentadas (sustain contínuo + quebra ao soltar cedo) e efeitos de palhetada.
  * - Suporte a duas esteiras simultâneas lado a lado no modo Multiplayer mantendo o palco visível.
  */
+data class HighwayGeometry(
+    val horizonY: Float,
+    val strikeY: Float,
+    val centerX: Float,
+    val topWidth: Float,
+    val bottomWidth: Float
+)
+
+fun computeHighwayLaneNormalizedOffset(lane: Int, numLanes: Int): Float {
+    val rawOffset = ((lane + 0.5f) / numLanes.toFloat()) - 0.5f
+    return rawOffset
+}
+
+fun computeSingleHighwayGeometry(
+    canvasWidth: Float,
+    canvasHeight: Float,
+    difficulty: Difficulty
+): HighwayGeometry {
+    val horizonY = canvasHeight * 0.138f
+    val strikeY = canvasHeight * 0.842f
+    val centerX = canvasWidth * 0.50f
+    val topFraction = when (difficulty.lanesUsed) {
+        3 -> 0.098f
+        4 -> 0.110f
+        else -> 0.122f
+    }
+    val bottomFraction = when (difficulty.lanesUsed) {
+        3 -> 0.340f
+        4 -> 0.382f
+        else -> 0.422f
+    }
+    val topWidth = (canvasWidth * topFraction).coerceAtLeast(36f)
+    val bottomWidth = (canvasWidth * bottomFraction).coerceAtLeast(120f)
+    return HighwayGeometry(horizonY, strikeY, centerX, topWidth, bottomWidth)
+}
+
+fun computeDualLeftHighwayGeometry(
+    canvasWidth: Float,
+    canvasHeight: Float
+): HighwayGeometry {
+    val horizonY = canvasHeight * 0.16f
+    val strikeY = canvasHeight * 0.82f
+    val centerX = canvasWidth * 0.275f
+    val topWidth = (canvasWidth * 0.098f).coerceAtLeast(34f)
+    val bottomWidth = (canvasWidth * 0.325f).coerceAtLeast(115f)
+    return HighwayGeometry(horizonY, strikeY, centerX, topWidth, bottomWidth)
+}
+
 fun drawHighway(
     drawScope: DrawScope,
     canvasWidth: Float,
@@ -117,9 +165,7 @@ fun drawHighway(
     strikeEnabled: Boolean = true,
     nowWallMs: Long = System.currentTimeMillis()
 ) {
-    val horizonY = canvasHeight * 0.14f
-    val strikeY = canvasHeight * 0.82f
-    val centerX = canvasWidth * 0.50f
+    val geo = computeSingleHighwayGeometry(canvasWidth, canvasHeight, difficulty)
     val timeSec = currentTimeMs / 1000f
     val effectiveStarPower = strikeEnabled && isStarPowerActive
 
@@ -135,22 +181,19 @@ fun drawHighway(
         instrument = instrument,
         playerStats = playerStats,
         highwayTheme = highwayTheme,
-        horizonY = horizonY,
-        centerX = centerX
+        horizonY = geo.horizonY,
+        centerX = geo.centerX
     )
 
     // 2. ESTEIRA DE NOTAS CLÁSSICA COM PERSPECTIVA FIXA CENTRALIZADA
-    val topWidth = (canvasWidth * 0.19f).coerceIn(130f, 235f)
-    val bottomWidth = (canvasWidth * 0.46f).coerceIn(310f, 540f)
-
     drawSinglePerspectiveHighway(
         drawScope = drawScope,
-        centerX = centerX,
+        centerX = geo.centerX,
         tiltShiftTopX = 0f,
-        topWidth = topWidth,
-        bottomWidth = bottomWidth,
-        horizonY = horizonY,
-        strikeY = strikeY,
+        topWidth = geo.topWidth,
+        bottomWidth = geo.bottomWidth,
+        horizonY = geo.horizonY,
+        strikeY = geo.strikeY,
         currentTimeMs = currentTimeMs,
         notes = notes,
         difficulty = difficulty,
@@ -198,8 +241,9 @@ fun drawDualMultiplayerHighways(
     strikeEnabled: Boolean = true,
     nowWallMs: Long = System.currentTimeMillis()
 ) {
-    val horizonY = canvasHeight * 0.16f
-    val strikeY = canvasHeight * 0.80f
+    val leftGeo = computeDualLeftHighwayGeometry(canvasWidth, canvasHeight)
+    val horizonY = leftGeo.horizonY
+    val strikeY = leftGeo.strikeY
     val stageCenterX = canvasWidth * 0.50f
     val timeSec = currentTimeMs / 1000f
     val anyStarPower = strikeEnabled && (leftStarPowerActive || rightStarPowerActive)
@@ -219,8 +263,8 @@ fun drawDualMultiplayerHighways(
         centerX = stageCenterX
     )
 
-    val topWidth = (canvasWidth * 0.145f).coerceIn(95f, 165f)
-    val bottomWidth = (canvasWidth * 0.34f).coerceIn(210f, 360f)
+    val topWidth = leftGeo.topWidth
+    val bottomWidth = leftGeo.bottomWidth
     val inwardTilt = canvasWidth * 0.042f
 
     // Esteira Esquerda (Jogador Local)
@@ -298,10 +342,15 @@ private fun drawSinglePerspectiveHighway(
     val topHalfW = topWidth * 0.5f
     val bottomHalfW = bottomWidth * 0.5f
 
+    val rxTarget = (bottomWidth / numLanes) * 0.36f
+    val ryTarget = rxTarget * 0.65f
+    // Margem extra para manter o receptor e o brilho totalmente dentro da borda inferior da pista.
+    val bottomEdgeY = strikeY + ryTarget * 1.08f
+
     val highwayTopLeft = Offset(topCenterX - topHalfW, horizonY)
     val highwayTopRight = Offset(topCenterX + topHalfW, horizonY)
-    val highwayBottomRight = Offset(centerX + bottomHalfW, strikeY + 38f)
-    val highwayBottomLeft = Offset(centerX - bottomHalfW, strikeY + 38f)
+    val highwayBottomRight = Offset(centerX + bottomHalfW, bottomEdgeY)
+    val highwayBottomLeft = Offset(centerX - bottomHalfW, bottomEdgeY)
 
     val highwayPath = Path().apply {
         moveTo(highwayTopLeft.x, highwayTopLeft.y)
@@ -321,13 +370,13 @@ private fun drawSinglePerspectiveHighway(
                 Color(0xFF00E5FF).copy(alpha = 0.90f)
             ),
             startY = horizonY,
-            endY = strikeY
+            endY = bottomEdgeY
         )
     } else {
         Brush.verticalGradient(
             colors = themeColors,
             startY = horizonY,
-            endY = strikeY
+            endY = bottomEdgeY
         )
     }
 
@@ -339,7 +388,7 @@ private fun drawSinglePerspectiveHighway(
             val maxX = maxOf(highwayTopRight.x, highwayBottomRight.x).toInt()
             val destTop = horizonY.toInt()
             val destW = (maxX - minX).coerceAtLeast(1)
-            val destH = (strikeY + 38f - horizonY).toInt().coerceAtLeast(1)
+            val destH = (bottomEdgeY - horizonY).toInt().coerceAtLeast(1)
             drawImage(
                 image = highwayOverlayBitmap,
                 srcOffset = IntOffset.Zero,
@@ -356,59 +405,52 @@ private fun drawSinglePerspectiveHighway(
         }
     }
 
-    // Trilhos Laterais Dourados/Bronze Metálicos ou Neon Star Power
+    // Trilhos Laterais Dourados/Champanhe Metálicos Limpos (idênticos à referência)
     val railColor = if (isStarPowerActive) Color(0xFF00E5FF) else Color(highwayTheme.primaryColorHex)
-    drawScope.drawLine(color = Color(0xFF14101A), start = highwayTopLeft, end = highwayBottomLeft, strokeWidth = 10f)
-    drawScope.drawLine(color = Color(0xFF14101A), start = highwayTopRight, end = highwayBottomRight, strokeWidth = 10f)
-    drawScope.drawLine(color = railColor, start = highwayTopLeft, end = highwayBottomLeft, strokeWidth = 5.5f)
-    drawScope.drawLine(color = railColor, start = highwayTopRight, end = highwayBottomRight, strokeWidth = 5.5f)
-    drawScope.drawLine(color = Color.White.copy(alpha = 0.55f), start = highwayTopLeft, end = highwayBottomLeft, strokeWidth = 1.5f)
-    drawScope.drawLine(color = Color.White.copy(alpha = 0.55f), start = highwayTopRight, end = highwayBottomRight, strokeWidth = 1.5f)
+    drawScope.drawLine(color = Color(0xFF120E19), start = highwayTopLeft, end = highwayBottomLeft, strokeWidth = 9.0f)
+    drawScope.drawLine(color = Color(0xFF120E19), start = highwayTopRight, end = highwayBottomRight, strokeWidth = 9.0f)
+    drawScope.drawLine(color = railColor, start = highwayTopLeft, end = highwayBottomLeft, strokeWidth = 5.2f)
+    drawScope.drawLine(color = railColor, start = highwayTopRight, end = highwayBottomRight, strokeWidth = 5.2f)
+    drawScope.drawLine(color = Color.White.copy(alpha = 0.62f), start = highwayTopLeft, end = highwayBottomLeft, strokeWidth = 1.4f)
+    drawScope.drawLine(color = Color.White.copy(alpha = 0.62f), start = highwayTopRight, end = highwayBottomRight, strokeWidth = 1.4f)
 
-    // Pinos/LEDs laterais nos trilhos
-    for (led in 1..8) {
-        val t = led / 9f
-        val curved = t.toDouble().pow(1.65).toFloat()
-        val ly = horizonY + (strikeY - horizonY) * curved
-        val rowCx = centerX + tiltShiftTopX * (1f - curved)
-        val halfW = (topWidth + (bottomWidth - topWidth) * curved) * 0.5f + 2f
-        val ledColor = if (isStarPowerActive) Color(0xFF80D8FF) else Color(0xFFE0E0E0).copy(alpha = 0.50f)
-        val ledR = (1.8f + curved * 2.1f)
-        drawScope.drawCircle(color = ledColor, radius = ledR, center = Offset(rowCx - halfW, ly))
-        drawScope.drawCircle(color = ledColor, radius = ledR, center = Offset(rowCx + halfW, ly))
-    }
+    fun widthAtDepth(curvedT: Float): Float = topWidth + (bottomWidth - topWidth) * curvedT
 
     fun get3dPosition(lane: Int, depth01: Float): Offset {
         val curvedT = depth01.coerceIn(0f, 1.15f).toDouble().pow(1.65).toFloat()
         val currentY = horizonY + (strikeY - horizonY) * curvedT
-        val currentWidth = topWidth + (bottomWidth - topWidth) * curvedT
+        val currentWidth = widthAtDepth(curvedT)
         val rowCenterX = centerX + tiltShiftTopX * (1f - curvedT)
-        val startX = rowCenterX - currentWidth * 0.5f
-        val laneWidth = currentWidth / numLanes
-        val laneCenterX = startX + laneWidth * (lane + 0.5f)
+        val laneCenterX = rowCenterX + currentWidth * computeHighwayLaneNormalizedOffset(lane, numLanes)
         return Offset(laneCenterX, currentY)
     }
 
-    // Cordas metálicas sutis por pista + divisórias
+    // Cordas metálicas sutis no centro de cada pista + divisórias de pista
+    val bottomEdgeScale = (bottomEdgeY - horizonY) / (strikeY - horizonY)
+    val bottomEdgeWidth = topWidth + (bottomWidth - topWidth) * bottomEdgeScale
     for (lane in 0 until numLanes) {
-        val topFrac = (lane + 0.5f) / numLanes
-        val topStrX = (topCenterX - topHalfW) + topWidth * topFrac
-        val botStrX = (centerX - bottomHalfW) + bottomWidth * topFrac
+        val offsetNorm = computeHighwayLaneNormalizedOffset(lane, numLanes)
+        val topStrX = topCenterX + topWidth * offsetNorm
+        val botStrX = centerX + bottomEdgeWidth * offsetNorm
         drawScope.drawLine(
-            color = Color(0xFFB8C0CC).copy(alpha = 0.24f),
+            color = Color(0xFFC2C8D6).copy(alpha = 0.16f),
             start = Offset(topStrX, horizonY),
-            end = Offset(botStrX, strikeY + 30f),
-            strokeWidth = 1.6f
+            end = Offset(botStrX, bottomEdgeY - 2f),
+            strokeWidth = 1.2f
         )
     }
     for (i in 1 until numLanes) {
-        val topLaneX = (topCenterX - topHalfW) + (topWidth / numLanes) * i
-        val bottomLaneX = (centerX - bottomHalfW) + (bottomWidth / numLanes) * i
+        val divOffsetNorm = (
+            computeHighwayLaneNormalizedOffset(i - 1, numLanes) +
+                computeHighwayLaneNormalizedOffset(i, numLanes)
+            ) * 0.5f
+        val topLaneX = topCenterX + topWidth * divOffsetNorm
+        val bottomLaneX = centerX + bottomEdgeWidth * divOffsetNorm
         drawScope.drawLine(
-            color = Color.White.copy(alpha = 0.18f),
+            color = Color.White.copy(alpha = 0.22f),
             start = Offset(topLaneX, horizonY),
-            end = Offset(bottomLaneX, strikeY + 34f),
-            strokeWidth = 1.3f
+            end = Offset(bottomLaneX, bottomEdgeY - 2f),
+            strokeWidth = 1.4f
         )
     }
 
@@ -424,31 +466,29 @@ private fun drawSinglePerspectiveHighway(
             val curved = depth.toDouble().pow(1.65).toFloat()
             val y = horizonY + (strikeY - horizonY) * curved
             val rowCx = centerX + tiltShiftTopX * (1f - curved)
-            val w = topWidth + (bottomWidth - topWidth) * curved
+            val w = widthAtDepth(curved)
             drawScope.drawLine(
-                color = Color.White.copy(alpha = depth * 0.30f),
+                color = Color.White.copy(alpha = 0.10f + depth * 0.22f),
                 start = Offset(rowCx - w * 0.5f, y),
                 end = Offset(rowCx + w * 0.5f, y),
-                strokeWidth = (3.2f * depth).coerceAtLeast(1f)
+                strokeWidth = (1.0f + 1.6f * depth)
             )
         }
     }
 
-    // Conectores horizontais ligando os botões receptores (o--o--o--o)
-    val rxTarget = ((bottomWidth / numLanes) * 0.39f).coerceIn(14f, 44f)
-    val ryTarget = rxTarget * 0.86f
+    // Conectores horizontais ligando apenas os vãos entre os anéis externos dos receptores (o--o--o)
     for (lane in 0 until numLanes - 1) {
         val p1 = get3dPosition(lane, 1.0f)
         val p2 = get3dPosition(lane + 1, 1.0f)
-        val bridgeStart = Offset(p1.x + rxTarget * 0.85f, strikeY)
-        val bridgeEnd = Offset(p2.x - rxTarget * 0.85f, strikeY)
+        val bridgeStart = Offset(p1.x + rxTarget * 1.02f, strikeY)
+        val bridgeEnd = Offset(p2.x - rxTarget * 1.02f, strikeY)
         if (bridgeEnd.x > bridgeStart.x) {
-            drawScope.drawLine(color = Color(0xFF14111D), start = bridgeStart, end = bridgeEnd, strokeWidth = 10f)
-            drawScope.drawLine(color = Color(0xFFDDE2EB).copy(alpha = 0.85f), start = bridgeStart, end = bridgeEnd, strokeWidth = 3.2f)
+            drawScope.drawLine(color = Color(0xFF100C18), start = bridgeStart, end = bridgeEnd, strokeWidth = 6.0f)
+            drawScope.drawLine(color = Color(0xFFEBEEF4).copy(alpha = 0.94f), start = bridgeStart, end = bridgeEnd, strokeWidth = 2.4f)
         }
     }
 
-    // Alvos de Traste Circulares Brilhantes com Aro Metálico + Efeito de Palhetada
+    // Alvos de Traste 3D em Perspectiva idênticos à imagem de referência (aro externo prateado + poço grafite largo + aro interno branco + domo LED brilhante)
     for (lane in 0 until numLanes) {
         val targetPos = get3dPosition(lane, 1.0f)
         val color = if (isStarPowerActive) Color(0xFF00E5FF) else LaneColors[lane]
@@ -458,18 +498,18 @@ private fun drawSinglePerspectiveHighway(
             1f - ((nowWallMs - flashTimestamp).coerceIn(0L, 240L) / 240f)
         } else 0f
 
-        // Sombra / aro base escuro do receptor
+        // 1. Sombra base externa escura + contorno escuro ao redor do anel prateado
         drawScope.drawOval(
-            color = Color(0xFF0C0913),
-            topLeft = Offset(targetPos.x - rxTarget * 1.12f, targetPos.y - ryTarget * 1.08f + 3f),
-            size = Size(rxTarget * 2.24f, ryTarget * 2.16f)
+            color = Color(0xFF0A0711),
+            topLeft = Offset(targetPos.x - rxTarget * 1.06f, targetPos.y - ryTarget * 1.06f + 2.5f),
+            size = Size(rxTarget * 2.12f, ryTarget * 2.12f)
         )
 
         if (isPressed || flashProgress > 0f) {
             drawScope.drawOval(
                 color = color.copy(alpha = (0.45f + flashProgress * 0.45f).coerceAtMost(0.9f)),
-                topLeft = Offset(targetPos.x - rxTarget * 1.34f, targetPos.y - ryTarget * 1.34f),
-                size = Size(rxTarget * 2.68f, ryTarget * 2.68f)
+                topLeft = Offset(targetPos.x - rxTarget * 1.24f, targetPos.y - ryTarget * 1.24f),
+                size = Size(rxTarget * 2.48f, ryTarget * 2.48f)
             )
             if (isPressed) {
                 drawFretFlameBurst(drawScope, targetPos, rxTarget, color, timeSec + lane)
@@ -479,40 +519,89 @@ private fun drawSinglePerspectiveHighway(
             }
         }
 
-        // Fundo luminoso radial interno do receptor circular
+        // 2. Poço interno preto/grafite profundo dentro do aro metálico externo
+        drawScope.drawOval(
+            color = Color(0xFF14111B),
+            topLeft = Offset(targetPos.x - rxTarget, targetPos.y - ryTarget),
+            size = Size(rxTarget * 2f, ryTarget * 2f)
+        )
+        // Degraus sutis concêntricos dentro do poço escuro (efeito usinado)
+        drawScope.drawOval(
+            color = Color(0xFF2B2736),
+            topLeft = Offset(targetPos.x - rxTarget * 0.87f, targetPos.y - ryTarget * 0.87f),
+            size = Size(rxTarget * 1.74f, ryTarget * 1.74f),
+            style = Stroke(width = 1.6f)
+        )
+        drawScope.drawOval(
+            color = Color(0xFF201C2B),
+            topLeft = Offset(targetPos.x - rxTarget * 0.74f, targetPos.y - ryTarget * 0.74f),
+            size = Size(rxTarget * 1.48f, ryTarget * 1.48f),
+            style = Stroke(width = 1.2f)
+        )
+
+        // 3. Anel externo metálico prateado/branco com contorno escuro interno para alto contraste
+        val outerRingW = ((rxTarget * 0.125f).coerceIn(3.5f, 6.2f)) + if (isPressed) 1.0f else 0f
+        drawScope.drawOval(
+            color = Color(0xFF0D0A14),
+            topLeft = Offset(targetPos.x - rxTarget * 0.94f, targetPos.y - ryTarget * 0.94f),
+            size = Size(rxTarget * 1.88f, ryTarget * 1.88f),
+            style = Stroke(width = outerRingW * 0.85f)
+        )
+        drawScope.drawOval(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color(0xFFF7F9FC), Color(0xFFD6DCE6), Color(0xFFA0A8B6)),
+                startY = targetPos.y - ryTarget,
+                endY = targetPos.y + ryTarget
+            ),
+            topLeft = Offset(targetPos.x - rxTarget, targetPos.y - ryTarget),
+            size = Size(rxTarget * 2f, ryTarget * 2f),
+            style = Stroke(width = outerRingW)
+        )
+
+        // 4. Sombra ao redor da gema central + domo interno colorido luminoso (57% do raio externo)
+        val innerRx = rxTarget * 0.57f
+        val innerRy = ryTarget * 0.57f
+        drawScope.drawOval(
+            color = Color(0xFF09070F),
+            topLeft = Offset(targetPos.x - innerRx * 1.07f, targetPos.y - innerRy * 1.07f),
+            size = Size(innerRx * 2.14f, innerRy * 2.14f)
+        )
         drawScope.drawOval(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color.White.copy(alpha = if (isPressed) 0.95f else 0.70f),
-                    color.copy(alpha = if (isPressed) 0.95f else 0.85f),
-                    color.copy(alpha = 0.25f)
+                    Color.White.copy(alpha = if (isPressed) 0.98f else 0.72f),
+                    color.copy(alpha = if (isPressed) 1.0f else 0.94f),
+                    color.copy(alpha = if (isPressed) 0.76f else 0.42f)
                 ),
-                center = targetPos,
-                radius = rxTarget
+                center = Offset(targetPos.x, targetPos.y - innerRy * 0.08f),
+                radius = innerRx * 0.98f
             ),
-            topLeft = Offset(targetPos.x - rxTarget * 0.84f, targetPos.y - ryTarget * 0.84f),
-            size = Size(rxTarget * 1.68f, ryTarget * 1.68f)
+            topLeft = Offset(targetPos.x - innerRx, targetPos.y - innerRy),
+            size = Size(innerRx * 2f, innerRy * 2f)
         )
 
-        // Anel externo metálico prateado/branco do receptor
+        // 5. Aro interno prateado/branco contornando a gema colorida
         drawScope.drawOval(
-            color = if (isPressed) Color.White else Color(0xFFE6EAF2),
-            topLeft = Offset(targetPos.x - rxTarget, targetPos.y - ryTarget),
-            size = Size(rxTarget * 2f, ryTarget * 2f),
-            style = Stroke(width = if (isPressed) 5.5f else 4.2f)
+            color = if (isPressed) Color.White else Color(0xFFEAEEF5),
+            topLeft = Offset(targetPos.x - innerRx * 1.02f, targetPos.y - innerRy * 1.02f),
+            size = Size(innerRx * 2.04f, innerRy * 2.04f),
+            style = Stroke(width = ((rxTarget * 0.055f).coerceIn(1.7f, 2.9f)) + if (isPressed) 0.7f else 0f)
         )
-        // Aro interno escuro para contraste
+
+        // 6. Brilho especular suave + ponto branco nítido no topo da gema
         drawScope.drawOval(
-            color = Color(0xFF171321),
-            topLeft = Offset(targetPos.x - rxTarget * 0.84f, targetPos.y - ryTarget * 0.84f),
-            size = Size(rxTarget * 1.68f, ryTarget * 1.68f),
-            style = Stroke(width = 2.0f)
+            brush = Brush.radialGradient(
+                colors = listOf(Color.White.copy(alpha = if (isPressed) 1.0f else 0.92f), Color.Transparent),
+                center = Offset(targetPos.x, targetPos.y - innerRy * 0.14f),
+                radius = innerRx * 0.45f
+            ),
+            topLeft = Offset(targetPos.x - innerRx * 0.44f, targetPos.y - innerRy * 0.56f),
+            size = Size(innerRx * 0.88f, innerRy * 0.88f)
         )
-        // Núcleo brilhante central
         drawScope.drawOval(
-            color = Color.White.copy(alpha = if (isPressed) 1f else 0.9f),
-            topLeft = Offset(targetPos.x - rxTarget * 0.24f, targetPos.y - ryTarget * 0.24f),
-            size = Size(rxTarget * 0.48f, ryTarget * 0.48f)
+            color = Color.White.copy(alpha = 0.95f),
+            topLeft = Offset(targetPos.x - innerRx * 0.18f, targetPos.y - innerRy * 0.28f),
+            size = Size(innerRx * 0.36f, innerRy * 0.32f)
         )
     }
 
@@ -535,8 +624,8 @@ private fun drawSinglePerspectiveHighway(
             val curved = depth.toDouble().pow(1.65).toFloat()
             val notePos = get3dPosition(note.lane, depth)
             val laneW = (topWidth + (bottomWidth - topWidth) * curved) / numLanes
-            val rx = (laneW * 0.37f).coerceIn(7f, 40f)
-            val ry = rx * 0.72f
+            val rx = (laneW * 0.34f).coerceAtLeast(6.5f)
+            val ry = rx * 0.62f
 
             if (note.durationMs > 50L) {
                 val tailEndDepth = (1.0f - ((timeUntilHit + note.durationMs).toFloat() / lookAheadMs.toFloat())).coerceIn(0f, 1.0f)
@@ -596,8 +685,8 @@ private fun drawSinglePerspectiveHighway(
                     // Pedestal escuro 3D chanfrado da nota
                     drawScope.drawOval(
                         color = Color(0xFF0A0710),
-                        topLeft = Offset(notePos.x - rx * 1.08f, notePos.y - ry * 0.92f + 4f),
-                        size = Size(rx * 2.16f, ry * 2.04f)
+                        topLeft = Offset(notePos.x - rx * 1.08f, notePos.y - ry * 0.94f + 3.5f * curved),
+                        size = Size(rx * 2.16f, ry * 2.02f)
                     )
                     // Anel colorido principal
                     drawScope.drawOval(
@@ -605,12 +694,12 @@ private fun drawSinglePerspectiveHighway(
                         topLeft = Offset(notePos.x - rx, notePos.y - ry),
                         size = Size(rx * 2f, ry * 2f)
                     )
-                    // Borda metálica prateada externa
+                    // Borda metálica branca externa
                     drawScope.drawOval(
-                        color = Color.White.copy(alpha = 0.90f),
+                        color = Color.White.copy(alpha = 0.94f),
                         topLeft = Offset(notePos.x - rx, notePos.y - ry),
                         size = Size(rx * 2f, ry * 2f),
-                        style = Stroke(width = (rx * 0.14f).coerceAtLeast(2.0f))
+                        style = Stroke(width = (rx * 0.14f).coerceAtLeast(1.8f))
                     )
                     // Domo interno preto + topo branco brilhante fiel à referência
                     drawScope.drawOval(
@@ -620,8 +709,8 @@ private fun drawSinglePerspectiveHighway(
                     )
                     drawScope.drawOval(
                         color = Color.White,
-                        topLeft = Offset(notePos.x - rx * 0.36f, notePos.y - ry * 0.40f),
-                        size = Size(rx * 0.72f, ry * 0.56f)
+                        topLeft = Offset(notePos.x - rx * 0.34f, notePos.y - ry * 0.36f),
+                        size = Size(rx * 0.68f, ry * 0.60f)
                     )
                 }
             }
