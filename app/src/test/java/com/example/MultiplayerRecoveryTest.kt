@@ -204,12 +204,13 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         assertTrue(vm.currentScreen.value is GameScreen.CompetitiveMultiplayer)
 
         vm.createMultiplayerRoom(MultiplayerMode.BATTLE_1V1, customRoomCode = roomCode)
-        waitUntilWithMainLooper { vm.multiplayerRoom.value != null }
+        waitUntilWithMainLooper(timeoutMs = 15000) { vm.multiplayerRoom.value != null || vm.multiplayerError.value != null }
+        assertNotNull("Room creation failed: ${vm.multiplayerError.value}", vm.multiplayerRoom.value)
         composeTestRule.waitForIdle()
         assertEquals(roomCode, vm.multiplayerRoom.value?.roomCode)
         composeTestRule.onNodeWithTag("multiplayer_room_code_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("multiplayer_invite_button").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("participant_card_$aliceUid").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("participant_card_$aliceUid").performScrollTo().assertIsDisplayed()
 
         // 2. Segundo jogador (Bob) entra na sala pelo código
         val (bobAuth, bobRepo) = getOrInitSecondaryBobRepo(app)
