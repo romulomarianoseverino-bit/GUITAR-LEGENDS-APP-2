@@ -74,7 +74,11 @@ abstract class FirestoreEmulatorTestBase {
             } catch (_: FirebaseAuthUserCollisionException) {
                 auth.signInWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
             }
-            checkNotNull(result.user?.uid) { "User auth failed for $email" }
+            val signedInUser = checkNotNull(result.user) { "User auth failed for $email" }
+            // Ensure the Auth Emulator has issued a token before Firestore integration tests
+            // start transactions; this avoids a race between Auth state and Firestore credentials.
+            signedInUser.getIdToken(true).await()
+            checkNotNull(signedInUser.uid) { "User auth failed for $email" }
         }
     }
 
@@ -93,6 +97,6 @@ abstract class FirestoreEmulatorTestBase {
         const val AUTH_PORT = 9099
         const val PROJECT_ID = "demo-no-project"
         const val DEFAULT_PASSWORD = "password123"
-        const val AUTH_TIMEOUT_MS = 5000L
+        const val AUTH_TIMEOUT_MS = 10_000L
     }
 }
