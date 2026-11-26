@@ -93,7 +93,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         if (db != null && auth != null) AccountCloudRepository(db, auth) else null
     }
     private val multiplayerRepo: MultiplayerCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) MultiplayerCloudRepository(db, auth) else null
     }
