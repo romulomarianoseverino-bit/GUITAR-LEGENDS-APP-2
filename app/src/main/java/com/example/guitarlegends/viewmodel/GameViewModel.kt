@@ -177,6 +177,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedTrackFlow = MutableStateFlow(AudioAnalyzer.BUILT_IN_TRACKS[0])
     val selectedTrackFlow: StateFlow<Track> = _selectedTrackFlow.asStateFlow()
+    private val _selectedInstrumentFlow = MutableStateFlow(Instrument.GUITAR)
+    val selectedInstrumentFlow: StateFlow<Instrument> = _selectedInstrumentFlow.asStateFlow()
+    private val _selectedDifficultyFlow = MutableStateFlow(Difficulty.MEDIUM)
+    val selectedDifficultyFlow: StateFlow<Difficulty> = _selectedDifficultyFlow.asStateFlow()
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
@@ -1578,8 +1582,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addTrackToPlaylist(playlistId: String, trackId: String) {
+        val targetTrack = _tracks.value.firstOrNull { it.id == trackId }
+        val targetHash = targetTrack?.contentHash?.takeIf { it.isNotBlank() }
         val updated = _playlists.value.map { pl ->
-            if (pl.id == playlistId && !pl.trackIds.contains(trackId)) {
+            val sameAudioAlreadyPresent = targetHash != null && pl.trackIds.any { existingId ->
+                _tracks.value.firstOrNull { it.id == existingId }
+                    ?.contentHash?.equals(targetHash, ignoreCase = true) == true
+            }
+            if (pl.id == playlistId && !pl.trackIds.contains(trackId) && !sameAudioAlreadyPresent) {
                 pl.copy(trackIds = pl.trackIds + trackId, updatedAtMs = System.currentTimeMillis())
             } else pl
         }
@@ -1660,10 +1670,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectInstrument(instrument: Instrument) {
         selectedInstrument = instrument
+        _selectedInstrumentFlow.value = instrument
     }
 
     fun selectDifficulty(difficulty: Difficulty) {
         selectedDifficulty = difficulty
+        _selectedDifficultyFlow.value = difficulty
     }
 
     fun setCompetitiveMode(competitive: Boolean) {
@@ -1861,6 +1873,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startMatch() {
+        val activeRoom = _multiplayerRoom.value
+        if (activeRoom?.statusEnum == RoomStatus.PLAYING &&
+            !applyMultiplayerRoomTrack(activeRoom)
+        ) {
+            return
+        }
         stopPreview()
         _playbackErrorMessage.value = null
         _score.value = 0
@@ -2398,6 +2416,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _multiplayerConnectionWarning.value = null
     }
 
+    private fun applyMultiplayerRoomTrack(room: MultiplayerRoomCloud): Boolean {
+        val track = if (room.trackId.startsWith("sha256_")) {
+            val fingerprint = room.trackId.removePrefix("sha256_")
+            _tracks.value.firstOrNull { it.contentHash.equals(fingerprint, ignoreCase = true) }
+        } else {
+            _tracks.value.firstOrNull { it.id == room.trackId }
+        }
+        if (track == null) {
+            _multiplayerError.value =
+                "A música escolhida pelo anfitrião (${room.trackTitle}) não está disponível nesta biblioteca. A partida foi bloqueada para não tocar outra faixa no lugar."
+            return false
+        }
+        selectTrack(track)
+        return true
+    }
+
     private fun effectiveMultiplayerNickname(): String {
         val fromAuth = (authUiState.value as? AuthUiState.Authenticated)?.nickname
         val fromStats = _playerStats.value.nickname.trim()
@@ -2574,7 +2608,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 _multiplayerMode.value = room.modeEnum
                 _localStrikeEnabled.value = room.strikeEnabled
                 setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                applyMultiplayerRoomTrack(room)
+                repo.getCurrentParticipant(room.roomCode).onSuccess { participant ->
+                    selectInstrument(participant.instrumentEnum)
+                    selectDifficulty(participant.difficultyEnum)
+                }
                 startObservingMultiplayerRoom(room.roomCode)
             }.onFailure { err ->
                 _multiplayerError.value = err.message ?: "Não foi possível entrar na sala."
@@ -2675,6 +2713,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             res.onSuccess { refreshed ->
                 _multiplayerRoom.value = refreshed
                 _multiplayerConnectionWarning.value = null
+                applyMultiplayerRoomTrack(refreshed)
+                repo.getCurrentParticipant(refreshed.roomCode).onSuccess { participant ->
+                    selectInstrument(participant.instrumentEnum)
+                    selectDifficulty(participant.difficultyEnum)
+                }
                 startObservingMultiplayerRoom(refreshed.roomCode)
             }.onFailure { err ->
                 _multiplayerConnectionWarning.value = "Falha ao reconectar: ${err.message}"
@@ -2762,14 +2805,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     _multiplayerMode.value = room.modeEnum
                     _localStrikeEnabled.value = room.strikeEnabled
                     setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                    _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                    val roomTrackAvailable = applyMultiplayerRoomTrack(room)
 
                     if (room.statusEnum == RoomStatus.PLAYING &&
                         !hasAutoStartedRoomMatch &&
                         _currentScreen.value !is GameScreen.Gameplay
                     ) {
                         hasAutoStartedRoomMatch = true
-                        startMatch()
+                        if (roomTrackAvailable) {
+                            viewModelScope.launch {
+                                repo.getCurrentParticipant(roomCode)
+                                    .onSuccess { participant ->
+                                        selectInstrument(participant.instrumentEnum)
+                                        selectDifficulty(participant.difficultyEnum)
+                                        startMatch()
+                                    }
+                                    .onFailure { err ->
+                                        _multiplayerError.value = err.message
+                                        hasAutoStartedRoomMatch = false
+                                    }
+                            }
+                        } else {
+                            hasAutoStartedRoomMatch = false
+                        }
                     } else if (room.statusEnum != RoomStatus.PLAYING) {
                         hasAutoStartedRoomMatch = false
                     }
