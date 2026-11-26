@@ -241,13 +241,15 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val density = LocalDensity.current
             val canvasWidthPx = with(density) { maxWidth.toPx() }
-            val buttonSize = if (isDualMultiplayer) 30.dp else 42.dp
             val trackWidthPx = if (isDualMultiplayer) {
                 (canvasWidthPx * 0.40f).coerceIn(230f, 410f)
             } else {
                 (canvasWidthPx * 0.54f).coerceIn(390f, 650f)
             }
             val trackWidthDp = with(density) { trackWidthPx.toDp() }
+            // Cada receptor ocupa quase toda a largura de sua coluna, sem deslocar
+            // os centros: eles continuam alinhados às respectivas notas da pista.
+            val buttonSize = (trackWidthDp / numLanes * 0.90f).coerceIn(24.dp, 116.dp)
             val rowYOffset = maxHeight * if (isDualMultiplayer) 0.80f else 0.85f
             val rowXOffset = if (isDualMultiplayer) {
                 with(density) { (-canvasWidthPx * 0.225f).toDp() }
@@ -1316,15 +1318,17 @@ private fun GameplayFretButton(
 ) {
     val laneColor = LaneColors[lane]
     val glowAlpha = when {
-        isPressed -> 0.95f
-        isFlashing -> 0.78f
-        else -> 0.48f
+        isPressed -> 1.0f
+        isFlashing -> 0.88f
+        else -> 0.58f
     }
     Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(Color(0xFF090A12))
-            .border(if (isPressed) 4.dp else 3.dp, Color(0xFFE6EAF2), CircleShape)
+            .background(Color(0xFF05060B))
+            // Anel externo escuro espesso, com filete claro discreto na borda.
+            .border(if (isPressed) 8.dp else 7.dp, Color(0xFF020309), CircleShape)
+            .border(1.25.dp, Color(0xFFCAD2DF).copy(alpha = 0.82f), CircleShape)
             .then(
                 if (interactive) {
                     Modifier.pointerInput(lane) {
@@ -1343,25 +1347,33 @@ private fun GameplayFretButton(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize(0.76f)
+                .fillMaxSize(0.72f)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = if (isPressed) 0.95f else 0.72f),
+                            Color.White.copy(alpha = if (isPressed) 1f else 0.82f),
                             laneColor.copy(alpha = glowAlpha),
-                            laneColor.copy(alpha = 0.90f),
+                            laneColor.copy(alpha = 0.98f),
                             Color(0xFF171321)
                         )
                     )
                 )
+                .border(1.75.dp, laneColor.copy(alpha = 1f), CircleShape)
+        )
+        // Núcleo central luminoso, reforçado durante o pressionamento.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.29f)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = if (isPressed || isFlashing) 1f else 0.92f))
                 .border(1.5.dp, laneColor.copy(alpha = 0.95f), CircleShape)
         )
         Box(
             modifier = Modifier
-                .fillMaxSize(0.20f)
+                .fillMaxSize(0.105f)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = if (isPressed || isFlashing) 1f else 0.82f))
+                .background(Color.White)
         )
     }
 }
