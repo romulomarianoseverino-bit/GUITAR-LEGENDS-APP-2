@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -42,6 +43,9 @@ import androidx.compose.foundation.verticalScroll
 import com.example.R
 import com.example.guitarlegends.analysis.AudioAnalyzer
 import com.example.guitarlegends.engine.LaneColors
+import com.example.guitarlegends.engine.computeDualLeftHighwayGeometry
+import com.example.guitarlegends.engine.computeHighwayLaneNormalizedOffset
+import com.example.guitarlegends.engine.computeSingleHighwayGeometry
 import com.example.guitarlegends.engine.drawDualMultiplayerHighways
 import com.example.guitarlegends.engine.drawHighway
 import com.example.guitarlegends.model.ControlMode
@@ -148,11 +152,15 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
         )
     }
 
-    Box(
+    val density = LocalDensity.current
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        val canvasWidthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val canvasHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         // Concert Stage Visual Background
         Image(
             painter = painterResource(id = R.drawable.stage_background_1794455515273),
@@ -542,116 +550,60 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             )
         }
 
-        // Bottom Controls: Fret Strike Touch Buttons ligados visualmente (o--o--o--o) e adaptados à dificuldade
-        Box(
-            modifier = Modifier
-                .align(if (isDualMultiplayer) Alignment.BottomStart else Alignment.BottomCenter)
-                .padding(
-                    start = if (isDualMultiplayer) 16.dp else 0.dp,
-                    bottom = 10.dp
-                )
-                .fillMaxWidth(if (isDualMultiplayer) 0.56f else 0.80f)
-                .height(68.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Haste horizontal metálica conectando os botões receptores (o--o--o--o)
+        // Áreas de toque multi-touch transparentes alinhadas 1-para-1 exatamente sobre os botões receptores da pista
+        val touchGeo = if (isDualMultiplayer) {
+            computeDualLeftHighwayGeometry(canvasWidthPx, canvasHeightPx)
+        } else {
+            computeSingleHighwayGeometry(canvasWidthPx, canvasHeightPx, difficulty)
+        }
+        val touchLaneW = touchGeo.bottomWidth / numLanes
+        val hitW = with(density) { touchLaneW.toDp() }.coerceAtLeast(48.dp)
+        val hitH = with(density) { (touchLaneW * 0.78f).toDp() }.coerceAtLeast(48.dp)
+        val strikeYDp = with(density) { touchGeo.strikeY.toDp() }
+
+        for (lane in 0 until numLanes) {
+            val laneCenterX = touchGeo.centerX +
+                touchGeo.bottomWidth * computeHighwayLaneNormalizedOffset(lane, numLanes)
+            val centerXDp = with(density) { laneCenterX.toDp() }
+
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.84f)
-                    .height(6.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(Color(0xFF282238), Color(0xFFDDE2EB), Color(0xFF282238))),
-                        RoundedCornerShape(3.dp)
+                    .offset(
+                        x = centerXDp - hitW * 0.5f,
+                        y = strikeYDp - hitH * 0.5f
                     )
-                    .border(1.dp, Color(0xFF14111D), RoundedCornerShape(3.dp))
-            )
-
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                for (lane in 0 until numLanes) {
-                    val color = LaneColors[lane]
-                    val isPressed = activeFretLanes.contains(lane)
-
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(CircleShape)
-                            .testTag("fret_touch_button_$lane")
-                            .pointerInteropFilter { motionEvent ->
-                                when (motionEvent.actionMasked) {
-                                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                                        viewModel.onFretDown(lane)
-                                        true
-                                    }
-                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                                        viewModel.onFretUp(lane)
-                                        true
-                                    }
-                                    else -> false
-                                }
-                            },
-                        color = if (isPressed) color.copy(alpha = 0.85f) else Color(0xCC161026),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = Brush.verticalGradient(
-                                listOf(Color(0xFFE6EAF2), color, Color(0xFF1A1426))
-                            ),
-                            width = if (isPressed) 4.dp else 3.dp
-                        ),
-                        shape = CircleShape
-                    ) {
-                        // Botão circular clássico limpo de traste (sem textos 'PISTA 1..5')
-                        Box(contentAlignment = Alignment.Center) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(
-                                        brush = Brush.radialGradient(
-                                            listOf(
-                                                Color.White.copy(alpha = if (isPressed) 0.98f else 0.72f),
-                                                color.copy(alpha = if (isPressed) 0.98f else 0.85f),
-                                                color.copy(alpha = 0.30f)
-                                            )
-                                        ),
-                                        shape = CircleShape
-                                    )
-                                    .border(
-                                        width = if (isPressed) 3.dp else 2.dp,
-                                        color = if (isPressed) Color.White else Color(0xFFE6EAF2),
-                                        shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .background(
-                                            color = if (isPressed) Color.White else Color.White.copy(alpha = 0.90f),
-                                            shape = CircleShape
-                                        )
-                                )
+                    .size(hitW, hitH)
+                    .clip(CircleShape)
+                    .testTag("fret_touch_button_$lane")
+                    .pointerInteropFilter { motionEvent ->
+                        when (motionEvent.actionMasked) {
+                            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                                viewModel.onFretDown(lane)
+                                true
                             }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                                viewModel.onFretUp(lane)
+                                true
+                            }
+                            else -> false
                         }
                     }
-                }
+            )
+        }
 
-                // Optional Strum bar for Fret+Strum mode
-                if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
-                    Button(
-                        onClick = { viewModel.onStrumBar() },
-                        colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .weight(1.15f)
-                            .fillMaxHeight()
-                            .testTag("strum_bar_button")
-                    ) {
-                        Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 11.sp)
-                    }
-                }
+        // Optional Strum bar for Fret+Strum mode positioned cleanly ao lado direito da pista
+        if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
+            val rightRailX = with(density) { (touchGeo.centerX + touchGeo.bottomWidth * 0.5f).toDp() }
+            Button(
+                onClick = { viewModel.onStrumBar() },
+                colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .offset(x = rightRailX + 14.dp, y = strikeYDp - 26.dp)
+                    .height(52.dp)
+                    .testTag("strum_bar_button")
+            ) {
+                Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 11.sp)
             }
         }
 
