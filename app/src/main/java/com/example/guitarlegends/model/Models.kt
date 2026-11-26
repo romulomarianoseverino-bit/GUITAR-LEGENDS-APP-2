@@ -143,7 +143,8 @@ data class Track(
     val isShortAudio: Boolean = false,
     val audioClassification: AudioClassification = if (isBuiltIn) AudioClassification.BUILT_IN_SYNTH else AudioClassification.MUSIC_FULL,
     val mimeType: String = "",
-    val syncOffsetMs: Long = 0L
+    val syncOffsetMs: Long = 0L,
+    val contentHash: String = ""
 ) {
     val effectiveBpm: Double
         get() = manualBpmOverride?.takeIf { it in 40.0..260.0 } ?: bpm.coerceIn(40.0, 260.0)
