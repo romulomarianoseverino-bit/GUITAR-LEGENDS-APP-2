@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/multiplayer-audio-fingerprint-loadout
     paths:
       - "app/**"
       - "gradle/**"
@@ -116,14 +117,13 @@ jobs:
           echo "STORE_PASSWORD=$GH_SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
           echo "KEY_PASSWORD=$GH_SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
 
-      # A compilação é independente do resultado dos testes automatizados.
-      # Assim, uma falha isolada não impede a geração de um APK para validação humana.
-      # O job continuará marcado como falho se os testes falharem; nenhum erro será ocultado.
-      - name: Compilar APK candidato para teste humano
+      # Só gera o APK candidato quando os testes automatizados passam.
+      # Não executar clean aqui: isso apagaria os relatórios de teste antes do upload.
+      - name: Compilar APK candidato após testes aprovados
         id: build_apk
-        if: always() && steps.prepare_signing.outcome == 'success' && !cancelled()
+        if: steps.tests.outcome == 'success' && steps.prepare_signing.outcome == 'success' && !cancelled()
         run: |
-          gradle --no-daemon clean assembleRelease
+          gradle --no-daemon assembleRelease
           mkdir -p app/build/outputs/apk/release
           {
             echo "Tipo: APK candidato para teste humano (NAO VALIDADO PARA RELEASE)"
