@@ -247,9 +247,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 (canvasWidthPx * 0.54f).coerceIn(390f, 650f)
             }
             val trackWidthDp = with(density) { trackWidthPx.toDp() }
-            // Botões compactos: redução de 22% sem alterar os centros das colunas.
-            // A largura da pista continua idêntica à usada pelo Canvas em drawHighway.
-            val buttonSize = (trackWidthDp / numLanes * 0.90f * 0.78f).coerceIn(24.dp, 116.dp)
+            // Botões compactos: redução de 25% em relação ao tamanho-base anterior.
+            // Cada centro permanece no centro exato da respectiva coluna da pista.
+            val buttonSize = (trackWidthDp / numLanes * 0.90f * 0.75f).coerceIn(24.dp, 116.dp)
             val rowYOffset = maxHeight * if (isDualMultiplayer) 0.80f else 0.85f
             val rowXOffset = if (isDualMultiplayer) {
                 with(density) { (-canvasWidthPx * 0.225f).toDp() }
