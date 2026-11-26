@@ -55,7 +55,7 @@ class MultiplayerCloudRepository(
         instrument: Instrument,
         difficulty: Difficulty,
         customRoomCode: String? = null,
-        strikeEnabled: Boolean = true
+        strikeEnabled: Boolean = false
     ): Result<MultiplayerRoomCloud> {
         val user = auth.currentUser
             ?: return Result.failure(IllegalStateException("Entre com sua conta Google antes de criar uma sala online."))
@@ -306,6 +306,33 @@ class MultiplayerCloudRepository(
                         "ready" to ready,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    suspend fun updateParticipantStrikeConsent(
+        roomCode: String,
+        consent: Boolean
+    ): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized/participants/$uid"
+        return try {
+            firestore.collection("multiplayer_rooms")
+                .document(normalized)
+                .collection("participants")
+                .document(uid)
+                .update(
+                    mapOf(
+                        "strikeConsent" to consent,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
