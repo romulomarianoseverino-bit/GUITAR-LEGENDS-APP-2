@@ -613,8 +613,14 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 }
             }
 
-            // Indicador visual do Rock Meter removido conforme a referência de palco.
-            // A mecânica interna de desempenho continua ativa para pontuação e regras do jogo.
+            // Medidor de aprovação clássico modernizado: mantém a avaliação visível,
+            // sem exibir o antigo Rock Meter como elemento separado do HUD.
+            PerformanceApprovalGauge(
+                rockMeter = rockMeter,
+                starPowerEnergy = starPowerEnergy,
+                isStarPowerActive = isStarPowerActive,
+                showStarPowerTubes = false
+            )
         }
 
         // A entrada dos receptores é tratada diretamente sobre o Canvas, usando
@@ -996,11 +1002,11 @@ private fun GuitarAmpScoreCabinet(
 }
 
 /**
- * Medidor Analógico Semicircular "ROCK" com ponteiro móvel e 5 válvulas luminosas
+ * Medidor analógico semicircular de aprovação com ponteiro móvel e acabamento metálico
  * ciano de Energia Estrelar no topo, fiel à referência clássica de console.
  */
 @Composable
-private fun AnalogRockMeterWithTubes(
+private fun PerformanceApprovalGauge(
     rockMeter: Float,
     starPowerEnergy: Float,
     isStarPowerActive: Boolean,
@@ -1021,7 +1027,7 @@ private fun AnalogRockMeterWithTubes(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .width(114.dp)
-            .testTag("analog_rock_meter")
+            .testTag("performance_approval_gauge")
     ) {
         Box(
             modifier = Modifier
@@ -1167,7 +1173,7 @@ private fun AnalogRockMeterWithTubes(
             }
 
             Text(
-                text = "ROCK",
+                text = "APROVAÇÃO",
                 color = Color.Black,
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
@@ -1176,7 +1182,7 @@ private fun AnalogRockMeterWithTubes(
             )
         }
 
-        // Badge de status de vibração da plateia
+        // Faixa de leitura da aprovação atual
         Surface(
             color = Color(0xCC120D1D),
             shape = RoundedCornerShape(6.dp),
