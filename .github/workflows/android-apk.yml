@@ -10,6 +10,9 @@ on:
       - "gradle/**"
       - "*.gradle*"
       - "settings.gradle.kts"
+      - "firestore.rules"
+      - "firestore.test.js"
+      - "firebase.json"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
@@ -44,14 +47,16 @@ jobs:
         with:
           gradle-version: "9.3.1"
 
-      - name: Instalar Firebase CLI
-        run: npm install --global firebase-tools@13.35.1
+      - name: Instalar Firebase CLI e dependências dos testes de regras
+        run: |
+          npm install --global firebase-tools@13.35.1
+          npm install --no-save @firebase/rules-unit-testing@3 firebase@10
 
-      - name: Executar testes unitários com Auth e Firestore Emulator
+      - name: Executar testes de regras, unitários e integração
         id: tests
         run: |
           firebase emulators:exec --project demo-no-project --only auth,firestore \
-            'gradle --no-daemon testDebugUnitTest'
+            'node --test firestore.test.js && gradle --no-daemon testDebugUnitTest'
 
       # Usa exclusivamente o keystore permanente do Guitar Legends, armazenado
       # nos segredos do GitHub. Se estiver ausente ou inválido, a compilação para.
