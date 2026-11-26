@@ -262,21 +262,24 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `04 - test repeated file names do not collide or overwrite previous tracks`() = runBlocking {
+    fun `04 - test importing identical audio twice reuses the existing track without duplicates`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = MusicLibraryRepository(context)
-        val temp1 = createValidMp3File(context, "rock_anthem.mp3", 75_000)
+        val source = createValidMp3File(context, "rock_anthem.mp3", 75_000)
 
-        val track1 = repo.importAudio(Uri.fromFile(temp1)).getOrThrow()
-        val track2 = repo.importAudio(Uri.fromFile(temp1)).getOrThrow()
+        val firstImport = repo.importAudio(Uri.fromFile(source)).getOrThrow()
+        val secondImport = repo.importAudio(Uri.fromFile(source)).getOrThrow()
 
-        assertNotEquals("IDs must be distinct", track1.id, track2.id)
-        assertNotEquals("Physical file paths must be distinct", track1.uriString, track2.uriString)
-        assertTrue(File(track1.uriString!!).exists())
-        assertTrue(File(track2.uriString!!).exists())
+        assertEquals("Identical audio must resolve to the existing library track", firstImport.id, secondImport.id)
+        assertEquals("Identical audio must not create a second physical copy", firstImport.uriString, secondImport.uriString)
+        assertTrue(File(firstImport.uriString!!).exists())
+        assertEquals(
+            "The library must contain exactly one entry for identical audio",
+            1,
+            repo.loadAllTracks().count { it.id == firstImport.id }
+        )
 
-        repo.deleteTrack(track1)
-        repo.deleteTrack(track2)
+        repo.deleteTrack(firstImport)
         Unit
     }
 
