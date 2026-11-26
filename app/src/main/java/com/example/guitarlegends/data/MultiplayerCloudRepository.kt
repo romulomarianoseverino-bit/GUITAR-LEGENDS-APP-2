@@ -227,7 +227,7 @@ class MultiplayerCloudRepository(
             Result.success(participant)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Result.failure(runCatching { handleFirestoreError(e, OperationType.READ, path, auth) }.exceptionOrNull() ?: e)
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.GET, path, auth) }.exceptionOrNull() ?: e)
         }
     }
 
