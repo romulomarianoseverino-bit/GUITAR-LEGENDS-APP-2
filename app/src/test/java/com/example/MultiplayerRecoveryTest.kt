@@ -91,7 +91,9 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         } catch (_: FirebaseAuthUserCollisionException) {
             bobAuth.signInWithEmailAndPassword(email, "password123").await()
         }
-        return checkNotNull(result.user?.uid)
+        val signedInUser = checkNotNull(result.user)
+        signedInUser.getIdToken(true).await()
+        return checkNotNull(signedInUser.uid)
     }
 
     @Test
@@ -186,6 +188,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         val aliceUid = awaitWithMainLooper { signInTestUser("mp_alice_$tag@test.com") }
 
         val vm = GameViewModel(app, firebaseApp)
+        assertEquals("ViewModel must use the authenticated test account", aliceUid, vm.currentMultiplayerUid())
         vm.updateGuestNickname("AliceLead")
         vm.enterGame()
 
