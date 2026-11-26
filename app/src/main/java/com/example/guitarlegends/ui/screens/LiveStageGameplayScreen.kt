@@ -19,7 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -258,14 +257,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     .align(Alignment.TopCenter)
                     .offset(x = rowXOffset, y = rowYOffset - buttonSize / 2)
                     .width(trackWidthDp)
-                    .height(buttonSize)
-                    .drawBehind {
-                        val y = size.height * 0.5f
-                        val startX = size.height * 0.5f
-                        val endX = size.width - startX
-                        drawLine(Color(0xFF05060B), Offset(startX, y), Offset(endX, y), strokeWidth = size.height * 0.26f)
-                        drawLine(Color(0xFFBFC7D5), Offset(startX, y), Offset(endX, y), strokeWidth = size.height * 0.08f)
-                    },
+                    .height(buttonSize),
                 horizontalArrangement = Arrangement.spacedBy(1.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -298,14 +290,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                             y = rowYOffset - buttonSize / 2
                         )
                         .width(trackWidthDp)
-                        .height(buttonSize)
-                        .drawBehind {
-                            val y = size.height * 0.5f
-                            val startX = size.height * 0.5f
-                            val endX = size.width - startX
-                            drawLine(Color(0xFF05060B), Offset(startX, y), Offset(endX, y), strokeWidth = size.height * 0.26f)
-                            drawLine(Color(0xFFBFC7D5), Offset(startX, y), Offset(endX, y), strokeWidth = size.height * 0.08f)
-                        },
+                        .height(buttonSize),
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -599,26 +584,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     )
                 }
             }
-
-            // Controle de palhetada reposicionado junto aos controles laterais:
-            // mantém a função FRET_AND_STRUM sem ocupar a apresentação inferior da pista.
-            if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
-                Button(
-                    onClick = { viewModel.onStrumBar() },
-                    colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
-                    modifier = Modifier
-                        .width(126.dp)
-                        .height(38.dp)
-                        .testTag("strum_bar_button")
-                ) {
-                    Text("PALHETAR", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
-                }
-            }
         }
 
-        // Right HUD: feedback de acerto + medidor de aprovação; sem Rock Meter separado.
+        // Right HUD: Hit Rating feedback + Classic Semicircular Rock Meter & 5 Star Power Vacuum Tubes
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -653,6 +621,26 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 isStarPowerActive = isStarPowerActive,
                 showStarPowerTubes = false
             )
+        }
+
+        // A entrada dos receptores é tratada diretamente sobre o Canvas, usando
+        // as mesmas coordenadas e a mesma quantidade de lanes do desenho da pista.
+        // A palheta fica separada, fora da área dos receptores, sem sobreposição.
+        if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
+            Button(
+                onClick = { viewModel.onStrumBar() },
+                colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 12.dp)
+                    .width(78.dp)
+                    .height(48.dp)
+                    .testTag("strum_bar_button")
+            ) {
+                Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
+            }
         }
 
         // Pause Menu Dialog Overlay (Ordem Exata: 1. Continuar, 2. Reiniciar música, 3. Controle de volume, 4. Próxima música, 5. Sair)
