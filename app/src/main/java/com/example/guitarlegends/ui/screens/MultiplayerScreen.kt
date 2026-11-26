@@ -54,7 +54,13 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val selectedInstrument by viewModel.selectedInstrumentFlow.collectAsState()
     val selectedDifficulty by viewModel.selectedDifficultyFlow.collectAsState()
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
-    val effectiveStrikeEnabled = room?.strikeEnabled ?: localStrikeEnabled
+    val selfParticipant = participants.find { it.userId == selfUid }
+    val effectiveStrikeEnabled = if (room == null) {
+        localStrikeEnabled
+    } else {
+        participants.isNotEmpty() && participants.all { it.strikeConsent == true }
+    }
+    val ownStrikeConsent = selfParticipant?.strikeConsent
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -66,8 +72,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val selfUid = viewModel.currentMultiplayerUid()
     val isSignedIn = selfUid != null && (authState is AuthUiState.Authenticated || authState is AuthUiState.NeedsNickname)
     val isHost = room != null && selfUid != null && room!!.hostUid == selfUid
-    val canEditStrike = room == null || (isHost && room!!.statusEnum == RoomStatus.WAITING)
-    val selfParticipant = participants.find { it.userId == selfUid }
+    val canEditStrike = room == null || room!!.statusEnum == RoomStatus.WAITING
 
     Column(
         modifier = Modifier
@@ -163,7 +168,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "SISTEMA DE STRIKE (STAR POWER)",
+                                        text = "SISTEMA DE STRIKE",
                                         color = RockAccentCyan,
                                         fontWeight = FontWeight.Black,
                                         fontSize = 9.sp
@@ -176,15 +181,26 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             fontSize = 8.sp,
                                             modifier = Modifier.testTag("multiplayer_strike_locked_badge")
                                         )
-                                    } else if (room != null && !isHost) {
+                                    } else if (room != null) {
                                         Text(
-                                            text = "DEFINIDO PELO HOST",
-                                            color = Color.White.copy(alpha = 0.7f),
+                                            text = when {
+                                                participants.any { it.strikeConsent == null } -> "AGUARDANDO TODOS"
+                                                effectiveStrikeEnabled -> "TODOS ACEITARAM"
+                                                else -> "STRIKE DESATIVADO"
+                                            },
+                                            color = if (effectiveStrikeEnabled) RockAccentCyan else RockAccentGold,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 8.sp
                                         )
                                     }
                                 }
+
+                                Text(
+                                    text = "Cada jogador escolhe. Strike só ativa com o aceite de todos; Star Power permanece disponível individualmente.",
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp
+                                )
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -194,9 +210,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                         onClick = { viewModel.setMultiplayerStrikeEnabled(true) },
                                         enabled = canEditStrike,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (effectiveStrikeEnabled) RockAccentCyan else Color(0x22FFFFFF),
-                                            contentColor = if (effectiveStrikeEnabled) Color.Black else Color.White,
-                                            disabledContainerColor = if (effectiveStrikeEnabled) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                            containerColor = if (if (room == null) effectiveStrikeEnabled else ownStrikeConsent == true) RockAccentCyan else Color(0x22FFFFFF),
+                                            contentColor = if (if (room == null) effectiveStrikeEnabled else ownStrikeConsent == true) Color.Black else Color.White,
+                                            disabledContainerColor = if (if (room == null) effectiveStrikeEnabled else ownStrikeConsent == true) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
@@ -206,7 +222,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             .testTag("multiplayer_strike_toggle_com")
                                     ) {
                                         Text(
-                                            text = if (effectiveStrikeEnabled) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
+                                            text = if (if (room == null) effectiveStrikeEnabled else ownStrikeConsent == true) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
                                             fontWeight = FontWeight.Black,
                                             fontSize = 9.sp,
                                             maxLines = 1
@@ -217,9 +233,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                         onClick = { viewModel.setMultiplayerStrikeEnabled(false) },
                                         enabled = canEditStrike,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (!effectiveStrikeEnabled) RockAccentGold else Color(0x22FFFFFF),
-                                            contentColor = if (!effectiveStrikeEnabled) Color.Black else Color.White,
-                                            disabledContainerColor = if (!effectiveStrikeEnabled) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                            containerColor = if (if (room == null) !effectiveStrikeEnabled else ownStrikeConsent == false) RockAccentGold else Color(0x22FFFFFF),
+                                            contentColor = if (if (room == null) !effectiveStrikeEnabled else ownStrikeConsent == false) Color.Black else Color.White,
+                                            disabledContainerColor = if (if (room == null) !effectiveStrikeEnabled else ownStrikeConsent == false) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
@@ -229,7 +245,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             .testTag("multiplayer_strike_toggle_sem")
                                     ) {
                                         Text(
-                                            text = if (!effectiveStrikeEnabled) "SEM STRIKE ✔" else "SEM STRIKE",
+                                            text = if (if (room == null) !effectiveStrikeEnabled else ownStrikeConsent == false) "SEM STRIKE ✔" else "SEM STRIKE",
                                             fontWeight = FontWeight.Black,
                                             fontSize = 9.sp,
                                             maxLines = 1
