@@ -1322,41 +1322,35 @@ private fun GameplayFretButton(
     modifier: Modifier = Modifier
 ) {
     val laneColor = LaneColors[lane]
+    val glowAlpha = when {
+        isPressed -> 1.0f
+        isFlashing -> 0.94f
+        else -> 0.72f
+    }
+    val coreTint = when (lane) {
+        0 -> Color(0xFFE8FFF0)
+        1 -> Color(0xFFFFE9EC)
+        2 -> Color(0xFFFFF9D9)
+        else -> Color(0xFFEAF0FF)
+    }
     val deepColor = when (lane) {
-        0 -> Color(0xFF07502F)
-        1 -> Color(0xFF711C28)
-        2 -> Color(0xFF795A0A)
-        3 -> Color(0xFF123B78)
-        else -> Color(0xFF79401A)
+        0 -> Color(0xFF004D2A)
+        1 -> Color(0xFF650B19)
+        2 -> Color(0xFF705000)
+        3 -> Color(0xFF092D70)
+        else -> Color(0xFF713000)
     }
-    val faceHighlight = when (lane) {
-        0 -> Color(0xFF9BC9A9)
-        1 -> Color(0xFFD69AA0)
-        2 -> Color(0xFFE0C77E)
-        3 -> Color(0xFF9CB5DD)
-        else -> Color(0xFFD7A982)
-    }
-    val responseAlpha = when {
-        isPressed -> 1f
-        isFlashing -> 0.96f
-        else -> 0.88f
-    }
-
     Box(
         modifier = modifier
             .clip(CircleShape)
             .background(
                 Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xFF69717C),
-                        Color(0xFF252B34),
-                        Color(0xFF090C12)
-                    )
+                    listOf(Color(0xFFEEF3FA), Color(0xFF555E6D), Color(0xFF11151E))
                 )
             )
-            // Carcaça grafite com aro metálico acetinado, sem brilho exagerado.
-            .border(if (isPressed) 7.dp else 6.dp, Color(0xFF080B10), CircleShape)
-            .border(1.2.dp, Color(0xFF9AA3AD).copy(alpha = 0.72f), CircleShape)
+            // Aro externo escuro e bisel metálico fino, preservando o diâmetro original.
+            .border(if (isPressed) 8.dp else 7.dp, Color(0xFF020309), CircleShape)
+            .border(1.25.dp, Color(0xFFDCE5F2).copy(alpha = 0.88f), CircleShape)
             .then(
                 if (interactive) {
                     Modifier.pointerInput(lane) {
@@ -1373,58 +1367,61 @@ private fun GameplayFretButton(
             .testTag(if (interactive) "fret_touch_button_$lane" else "partner_fret_button_$lane"),
         contentAlignment = Alignment.Center
     ) {
-        // Rebaixo de borracha escura que separa a carcaça da tecla física.
+        // Rebaixo preto entre o aro metálico e a face colorida, típico dos botões de ritmo.
         Box(
             modifier = Modifier
-                .fillMaxSize(0.87f)
+                .fillMaxSize(0.86f)
                 .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(Color(0xFF05070A), Color(0xFF202630), Color(0xFF080A0E))
-                    )
-                )
-                .border(1.4.dp, Color(0xFF59616B), CircleShape)
+                .background(Color(0xFF080B12))
+                .border(1.5.dp, Color(0xFF687386), CircleShape)
         )
-
-        // Tampa colorida com volume discreto e acabamento de resina acetinada.
+        // Face convexa: brilho no centro, cor saturada no corpo e sombra na borda.
         Box(
             modifier = Modifier
-                .fillMaxSize(0.77f)
+                .fillMaxSize(0.74f)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            faceHighlight.copy(alpha = responseAlpha),
-                            laneColor.copy(alpha = responseAlpha),
+                            coreTint.copy(alpha = if (isPressed) 1f else 0.94f),
+                            laneColor.copy(alpha = glowAlpha),
+                            laneColor,
                             deepColor
                         )
                     )
                 )
-                .border(1.6.dp, deepColor.copy(alpha = 0.9f), CircleShape)
+                .border(2.dp, laneColor.copy(alpha = if (isPressed) 1f else 0.92f), CircleShape)
         )
-
-        // Reflexo amplo e suave na borda superior: sugere material real sem efeito plástico.
+        // Reflexo especular discreto no quadrante superior esquerdo para dar volume 3D.
         Box(
             modifier = Modifier
-                .fillMaxSize(0.66f)
+                .fillMaxSize(0.25f)
+                .align(Alignment.TopStart)
+                .offset(x = 12.dp, y = 12.dp)
                 .clip(CircleShape)
                 .background(
-                    Brush.verticalGradient(
+                    Brush.radialGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = if (isPressed) 0.19f else 0.11f),
-                            Color.White.copy(alpha = 0.025f),
+                            Color.White.copy(alpha = if (isPressed) 0.72f else 0.42f),
+                            Color.White.copy(alpha = 0.12f),
                             Color.Transparent
                         )
                     )
                 )
         )
-
-        // Pequeno indicador de luz integrado à tecla, sem ponto branco dominante.
+        // Ponto central claro e compacto, sem anel escuro largo no miolo.
         Box(
             modifier = Modifier
-                .fillMaxSize(0.075f)
+                .fillMaxSize(0.13f)
                 .clip(CircleShape)
-                .background(faceHighlight.copy(alpha = if (isPressed || isFlashing) 0.95f else 0.62f))
+                .background(coreTint.copy(alpha = if (isPressed || isFlashing) 1f else 0.96f))
+                .border(1.dp, Color.White.copy(alpha = 0.95f), CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.055f)
+                .clip(CircleShape)
+                .background(Color.White)
         )
     }
 }
