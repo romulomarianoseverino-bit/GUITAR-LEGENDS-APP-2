@@ -54,6 +54,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val selectedInstrument by viewModel.selectedInstrumentFlow.collectAsState()
     val selectedDifficulty by viewModel.selectedDifficultyFlow.collectAsState()
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
+    val selfUid = viewModel.currentMultiplayerUid()
     val selfParticipant = participants.find { it.userId == selfUid }
     val effectiveStrikeEnabled = if (room == null) {
         localStrikeEnabled
@@ -69,7 +70,6 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     var joinCodeInput by remember { mutableStateOf("") }
     var inviteCopiedNotice by remember { mutableStateOf(false) }
 
-    val selfUid = viewModel.currentMultiplayerUid()
     val isSignedIn = selfUid != null && (authState is AuthUiState.Authenticated || authState is AuthUiState.NeedsNickname)
     val isHost = room != null && selfUid != null && room!!.hostUid == selfUid
     val canEditStrike = room == null || room!!.statusEnum == RoomStatus.WAITING
