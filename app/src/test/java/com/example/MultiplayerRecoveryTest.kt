@@ -185,7 +185,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         val roomCode = "ROCK-$tag"
         val aliceUid = awaitWithMainLooper { signInTestUser("mp_alice_$tag@test.com") }
 
-        val vm = GameViewModel(app)
+        val vm = GameViewModel(app, firebaseApp)
         vm.updateGuestNickname("AliceLead")
         vm.enterGame()
 
@@ -222,6 +222,8 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // Espera sincronização em tempo real no ViewModel da Alice
         waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("multiplayer_participants_list")
+            .performScrollToNode(hasTestTag("participant_card_$bobUid"))
         composeTestRule.onNodeWithTag("participant_card_$bobUid").assertIsDisplayed()
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
