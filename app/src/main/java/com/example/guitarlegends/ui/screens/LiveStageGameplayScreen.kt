@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -257,7 +258,14 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     .align(Alignment.TopCenter)
                     .offset(x = rowXOffset, y = rowYOffset - buttonSize / 2)
                     .width(trackWidthDp)
-                    .height(buttonSize),
+                    .height(buttonSize)
+                    .drawBehind {
+                        val centerY = size.height * 0.5f
+                        val startX = size.height * 0.5f
+                        val endX = size.width - startX
+                        drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.26f)
+                        drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.08f)
+                    },
                 horizontalArrangement = Arrangement.spacedBy(1.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -290,7 +298,14 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                             y = rowYOffset - buttonSize / 2
                         )
                         .width(trackWidthDp)
-                        .height(buttonSize),
+                        .height(buttonSize)
+                        .drawBehind {
+                            val centerY = size.height * 0.5f
+                            val startX = size.height * 0.5f
+                            val endX = size.width - startX
+                            drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.26f)
+                            drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.08f)
+                        },
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
