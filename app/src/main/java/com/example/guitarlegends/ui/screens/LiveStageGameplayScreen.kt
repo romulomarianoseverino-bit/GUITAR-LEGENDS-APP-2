@@ -247,9 +247,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 (canvasWidthPx * 0.54f).coerceIn(390f, 650f)
             }
             val trackWidthDp = with(density) { trackWidthPx.toDp() }
-            // Cada receptor ocupa quase toda a largura de sua coluna, sem deslocar
-            // os centros: eles continuam alinhados às respectivas notas da pista.
-            val buttonSize = (trackWidthDp / numLanes * 0.90f).coerceIn(24.dp, 116.dp)
+            // Botões compactos: redução de 22% sem alterar os centros das colunas.
+            // A largura da pista continua idêntica à usada pelo Canvas em drawHighway.
+            val buttonSize = (trackWidthDp / numLanes * 0.90f * 0.78f).coerceIn(24.dp, 116.dp)
             val rowYOffset = maxHeight * if (isDualMultiplayer) 0.80f else 0.85f
             val rowXOffset = if (isDualMultiplayer) {
                 with(density) { (-canvasWidthPx * 0.225f).toDp() }
@@ -263,12 +263,15 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     .height(buttonSize)
                     .drawBehind {
                         val centerY = size.height * 0.5f
-                        val startX = size.height * 0.5f
+                        val laneWidth = size.width / numLanes
+                        // A barra liga os centros das colunas por baixo dos botões;
+                        // as faces opacas ocultam o trecho central de cada círculo.
+                        val startX = laneWidth * 0.5f
                         val endX = size.width - startX
-                        drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.26f)
-                        drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.08f)
+                        drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.18f)
+                        drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.045f)
                     },
-                horizontalArrangement = Arrangement.spacedBy(1.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 repeat(numLanes) { lane ->
@@ -313,7 +316,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                                 drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.055f)
                             }
                         },
-                    horizontalArrangement = Arrangement.spacedBy(1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(0.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     repeat(partnerDifficulty.lanesUsed) { lane ->
@@ -1349,8 +1352,8 @@ private fun GameplayFretButton(
                 )
             )
             // Aro externo escuro e bisel metálico fino, preservando o diâmetro original.
-            .border(if (isPressed) 8.dp else 7.dp, Color(0xFF020309), CircleShape)
-            .border(1.25.dp, Color(0xFFDCE5F2).copy(alpha = 0.88f), CircleShape)
+            .border(if (isPressed) 5.dp else 4.5.dp, Color(0xFF020309), CircleShape)
+            .border(1.dp, Color(0xFFDCE5F2).copy(alpha = 0.88f), CircleShape)
             .then(
                 if (interactive) {
                     Modifier.pointerInput(lane) {
@@ -1383,7 +1386,6 @@ private fun GameplayFretButton(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            coreTint.copy(alpha = if (isPressed) 1f else 0.94f),
                             laneColor.copy(alpha = glowAlpha),
                             laneColor,
                             deepColor
