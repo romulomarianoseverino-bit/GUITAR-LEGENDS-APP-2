@@ -664,7 +664,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                         )
 
                         LazyColumn(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("multiplayer_participants_list"),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             items(participants, key = { it.userId }) { p ->
