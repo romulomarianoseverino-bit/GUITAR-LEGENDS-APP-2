@@ -1351,7 +1351,7 @@ private fun GameplayFretButton(
                     listOf(Color(0xFFEEF3FA), Color(0xFF555E6D), Color(0xFF11151E))
                 )
             )
-            // Aro externo escuro e bisel metálico fino, preservando o diâmetro original.
+            // Aro externo escuro mais fino, com bisel metálico discreto.
             .border(if (isPressed) 5.dp else 4.5.dp, Color(0xFF020309), CircleShape)
             .border(1.dp, Color(0xFFDCE5F2).copy(alpha = 0.88f), CircleShape)
             .then(
