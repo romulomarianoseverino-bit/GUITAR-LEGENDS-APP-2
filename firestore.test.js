@@ -333,6 +333,7 @@ function makeValidParticipant(roomCode, uid, nickname = "Rocker") {
     combo: 0,
     rockMeter: 0.6,
     starPowerActive: false,
+    strikeConsent: null,
     lastHeartbeatMs: Date.now(),
     joinedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -505,3 +506,81 @@ test("Strike System & Daily Weekly Cap: rules enforce host lock on PLAYING and <
   );
 });
 
+test("Strike consent: every participant must accept before Strike can be enabled", async () => {
+  const roomCode = "STRK-YES";
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const roomRef = aliceDb.collection("multiplayer_rooms").doc(roomCode);
+
+  await assertSucceeds(roomRef.set(makeValidRoom(roomCode, ALICE_UID)));
+  await assertSucceeds(
+    roomRef.collection("participants").doc(ALICE_UID).set({
+      ...makeValidParticipant(roomCode, ALICE_UID, "AliceHost"),
+      strikeConsent: true,
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("multiplayer_rooms").doc(roomCode).update({
+      memberUids: [ALICE_UID, BOB_UID],
+      updatedAt: serverTimestamp(),
+    })
+  );
+  const bobParticipant = bobDb.collection("multiplayer_rooms").doc(roomCode)
+    .collection("participants").doc(BOB_UID);
+  await assertSucceeds(bobParticipant.set(makeValidParticipant(roomCode, BOB_UID, "BobRock")));
+  await assertSucceeds(bobParticipant.update({
+    strikeConsent: true,
+    updatedAt: serverTimestamp(),
+  }));
+
+  await assertSucceeds(roomRef.update({
+    status: "PLAYING",
+    strikeEnabled: true,
+    updatedAt: serverTimestamp(),
+  }));
+
+  // Consent becomes immutable once the match starts.
+  await assertFails(bobParticipant.update({
+    strikeConsent: false,
+    updatedAt: serverTimestamp(),
+  }));
+});
+
+test("Strike consent: one refusal blocks Strike but does not block a no-Strike match", async () => {
+  const roomCode = "STRK-NO";
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const roomRef = aliceDb.collection("multiplayer_rooms").doc(roomCode);
+
+  await assertSucceeds(roomRef.set(makeValidRoom(roomCode, ALICE_UID)));
+  await assertSucceeds(
+    roomRef.collection("participants").doc(ALICE_UID).set({
+      ...makeValidParticipant(roomCode, ALICE_UID, "AliceHost"),
+      strikeConsent: true,
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("multiplayer_rooms").doc(roomCode).update({
+      memberUids: [ALICE_UID, BOB_UID],
+      updatedAt: serverTimestamp(),
+    })
+  );
+  const bobParticipant = bobDb.collection("multiplayer_rooms").doc(roomCode)
+    .collection("participants").doc(BOB_UID);
+  await assertSucceeds(bobParticipant.set(makeValidParticipant(roomCode, BOB_UID, "BobRock")));
+  await assertSucceeds(bobParticipant.update({
+    strikeConsent: false,
+    updatedAt: serverTimestamp(),
+  }));
+
+  await assertFails(roomRef.update({
+    status: "PLAYING",
+    strikeEnabled: true,
+    updatedAt: serverTimestamp(),
+  }));
+  await assertSucceeds(roomRef.update({
+    status: "PLAYING",
+    strikeEnabled: false,
+    updatedAt: serverTimestamp(),
+  }));
+});
