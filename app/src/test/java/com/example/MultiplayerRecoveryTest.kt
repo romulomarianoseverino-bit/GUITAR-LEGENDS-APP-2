@@ -208,7 +208,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.waitForIdle()
         assertEquals(roomCode, vm.multiplayerRoom.value?.roomCode)
         composeTestRule.onNodeWithTag("multiplayer_room_code_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_invite_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_invite_button").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("participant_card_$aliceUid").assertIsDisplayed()
 
         // 2. Segundo jogador (Bob) entra na sala pelo código
