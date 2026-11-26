@@ -118,7 +118,7 @@ fun drawHighway(
     nowWallMs: Long = System.currentTimeMillis()
 ) {
     val horizonY = canvasHeight * 0.14f
-    val strikeY = canvasHeight * 0.82f
+    val strikeY = canvasHeight * 0.85f
     val centerX = canvasWidth * 0.50f
     val timeSec = currentTimeMs / 1000f
     val effectiveStarPower = strikeEnabled && isStarPowerActive
@@ -140,8 +140,8 @@ fun drawHighway(
     )
 
     // 2. ESTEIRA DE NOTAS CLÁSSICA COM PERSPECTIVA FIXA CENTRALIZADA
-    val topWidth = (canvasWidth * 0.19f).coerceIn(130f, 235f)
-    val bottomWidth = (canvasWidth * 0.46f).coerceIn(310f, 540f)
+    val topWidth = (canvasWidth * 0.22f).coerceIn(150f, 260f)
+    val bottomWidth = (canvasWidth * 0.54f).coerceIn(390f, 650f)
 
     drawSinglePerspectiveHighway(
         drawScope = drawScope,
@@ -219,8 +219,8 @@ fun drawDualMultiplayerHighways(
         centerX = stageCenterX
     )
 
-    val topWidth = (canvasWidth * 0.145f).coerceIn(95f, 165f)
-    val bottomWidth = (canvasWidth * 0.34f).coerceIn(210f, 360f)
+    val topWidth = (canvasWidth * 0.16f).coerceIn(110f, 190f)
+    val bottomWidth = (canvasWidth * 0.40f).coerceIn(230f, 410f)
     val inwardTilt = canvasWidth * 0.042f
 
     // Esteira Esquerda (Jogador Local)
@@ -434,89 +434,7 @@ private fun drawSinglePerspectiveHighway(
         }
     }
 
-    // Conectores horizontais ligando os botões receptores (o--o--o--o)
-    val rxTarget = ((bottomWidth / numLanes) * 0.39f).coerceIn(14f, 44f)
-    val ryTarget = rxTarget * 0.86f
-    for (lane in 0 until numLanes - 1) {
-        val p1 = get3dPosition(lane, 1.0f)
-        val p2 = get3dPosition(lane + 1, 1.0f)
-        val bridgeStart = Offset(p1.x + rxTarget * 0.85f, strikeY)
-        val bridgeEnd = Offset(p2.x - rxTarget * 0.85f, strikeY)
-        if (bridgeEnd.x > bridgeStart.x) {
-            drawScope.drawLine(color = Color(0xFF14111D), start = bridgeStart, end = bridgeEnd, strokeWidth = 10f)
-            drawScope.drawLine(color = Color(0xFFDDE2EB).copy(alpha = 0.85f), start = bridgeStart, end = bridgeEnd, strokeWidth = 3.2f)
-        }
-    }
-
-    // Alvos de Traste Circulares Brilhantes com Aro Metálico + Efeito de Palhetada
-    for (lane in 0 until numLanes) {
-        val targetPos = get3dPosition(lane, 1.0f)
-        val color = if (isStarPowerActive) Color(0xFF00E5FF) else LaneColors[lane]
-        val isPressed = activeFretLanes.contains(lane)
-        val flashTimestamp = activePickFlashes[lane] ?: 0L
-        val flashProgress = if (flashTimestamp > 0L) {
-            1f - ((nowWallMs - flashTimestamp).coerceIn(0L, 240L) / 240f)
-        } else 0f
-
-        // Sombra / aro base escuro do receptor
-        drawScope.drawOval(
-            color = Color(0xFF0C0913),
-            topLeft = Offset(targetPos.x - rxTarget * 1.12f, targetPos.y - ryTarget * 1.08f + 3f),
-            size = Size(rxTarget * 2.24f, ryTarget * 2.16f)
-        )
-
-        if (isPressed || flashProgress > 0f) {
-            drawScope.drawOval(
-                color = color.copy(alpha = (0.45f + flashProgress * 0.45f).coerceAtMost(0.9f)),
-                topLeft = Offset(targetPos.x - rxTarget * 1.34f, targetPos.y - ryTarget * 1.34f),
-                size = Size(rxTarget * 2.68f, ryTarget * 2.68f)
-            )
-            if (isPressed) {
-                drawFretFlameBurst(drawScope, targetPos, rxTarget, color, timeSec + lane)
-            }
-            if (flashProgress > 0f) {
-                drawPickStrumArcBurst(drawScope, targetPos, rxTarget, color, flashProgress)
-            }
-        }
-
-        // Fundo luminoso radial interno do receptor circular
-        drawScope.drawOval(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = if (isPressed) 0.95f else 0.70f),
-                    color.copy(alpha = if (isPressed) 0.95f else 0.85f),
-                    color.copy(alpha = 0.25f)
-                ),
-                center = targetPos,
-                radius = rxTarget
-            ),
-            topLeft = Offset(targetPos.x - rxTarget * 0.84f, targetPos.y - ryTarget * 0.84f),
-            size = Size(rxTarget * 1.68f, ryTarget * 1.68f)
-        )
-
-        // Anel externo metálico prateado/branco do receptor
-        drawScope.drawOval(
-            color = if (isPressed) Color.White else Color(0xFFE6EAF2),
-            topLeft = Offset(targetPos.x - rxTarget, targetPos.y - ryTarget),
-            size = Size(rxTarget * 2f, ryTarget * 2f),
-            style = Stroke(width = if (isPressed) 5.5f else 4.2f)
-        )
-        // Aro interno escuro para contraste
-        drawScope.drawOval(
-            color = Color(0xFF171321),
-            topLeft = Offset(targetPos.x - rxTarget * 0.84f, targetPos.y - ryTarget * 0.84f),
-            size = Size(rxTarget * 1.68f, ryTarget * 1.68f),
-            style = Stroke(width = 2.0f)
-        )
-        // Núcleo brilhante central
-        drawScope.drawOval(
-            color = Color.White.copy(alpha = if (isPressed) 1f else 0.9f),
-            topLeft = Offset(targetPos.x - rxTarget * 0.24f, targetPos.y - ryTarget * 0.24f),
-            size = Size(rxTarget * 0.48f, ryTarget * 0.48f)
-        )
-    }
-
-    // Notas 3D (Discos Chanfrados, Estrelas Star Power & Sustains Contínuos/Quebrados)
+    // Os botões de traste são desenhados pela interface Compose, sobre a linha de acerto.\n\n    // Notas 3D (Discos Chanfrados, Estrelas Star Power & Sustains Contínuos/Quebrados)
     for (note in notes) {
         if (note.isMissed) continue
         if (note.lane >= numLanes) continue
@@ -535,8 +453,8 @@ private fun drawSinglePerspectiveHighway(
             val curved = depth.toDouble().pow(1.65).toFloat()
             val notePos = get3dPosition(note.lane, depth)
             val laneW = (topWidth + (bottomWidth - topWidth) * curved) / numLanes
-            val rx = (laneW * 0.37f).coerceIn(7f, 40f)
-            val ry = rx * 0.72f
+            val rx = (laneW * 0.43f).coerceIn(12f, 56f)
+            val ry = rx * 0.82f
 
             if (note.durationMs > 50L) {
                 val tailEndDepth = (1.0f - ((timeUntilHit + note.durationMs).toFloat() / lookAheadMs.toFloat())).coerceIn(0f, 1.0f)

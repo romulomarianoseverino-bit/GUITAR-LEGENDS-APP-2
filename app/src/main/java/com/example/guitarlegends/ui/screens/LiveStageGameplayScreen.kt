@@ -1,6 +1,5 @@
 package com.example.guitarlegends.ui.screens
 
-import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -18,7 +17,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -29,14 +27,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
@@ -52,11 +48,9 @@ import com.example.guitarlegends.model.MultiplayerMode
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.GameScreen
 import com.example.guitarlegends.viewmodel.GameViewModel
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     BackHandler {
@@ -90,32 +84,6 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val numLanes = difficulty.lanesUsed
     val strikeEnabled = mpRoom?.strikeEnabled ?: localStrikeEnabled
     val isDualMultiplayer = mpRoom != null || isLocalMultiplayerMatch
-
-    // Coordenadas da pista e associação dos dedos aos receptores reais do Canvas.
-    var gameplayCanvasSize by remember { mutableStateOf(IntSize.Zero) }
-    val activeFretPointers = remember { mutableMapOf<Int, Int>() }
-
-    fun laneForTouch(x: Float, y: Float): Int? {
-        val width = gameplayCanvasSize.width.toFloat()
-        val height = gameplayCanvasSize.height.toFloat()
-        if (width <= 0f || height <= 0f) return null
-
-        val strikeY = height * if (isDualMultiplayer) 0.80f else 0.82f
-        if (abs(y - strikeY) > maxOf(height * 0.085f, 72f)) return null
-
-        // Mesma geometria usada em HighwayRenderer.drawHighway/drawDualMultiplayerHighways.
-        val highwayCenterX = width * if (isDualMultiplayer) 0.275f else 0.50f
-        val highwayWidth = if (isDualMultiplayer) {
-            (width * 0.34f).coerceIn(210f, 360f)
-        } else {
-            (width * 0.46f).coerceIn(310f, 540f)
-        }
-        val leftEdge = highwayCenterX - highwayWidth * 0.5f
-        if (x < leftEdge || x >= leftEdge + highwayWidth) return null
-
-        val laneWidth = highwayWidth / numLanes
-        return ((x - leftEdge) / laneWidth).toInt().coerceIn(0, numLanes - 1)
-    }
 
     val selfUid = viewModel.currentMultiplayerUid()
     val partnerParticipant = mpParticipants.firstOrNull { it.userId != selfUid }
@@ -209,33 +177,6 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { gameplayCanvasSize = it }
-                .pointerInteropFilter { motionEvent ->
-                    val actionIndex = motionEvent.actionIndex
-                    when (motionEvent.actionMasked) {
-                        MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                            val pointerId = motionEvent.getPointerId(actionIndex)
-                            val lane = laneForTouch(motionEvent.getX(actionIndex), motionEvent.getY(actionIndex))
-                            if (lane != null) {
-                                activeFretPointers[pointerId] = lane
-                                viewModel.onFretDown(lane)
-                            }
-                            lane != null || activeFretPointers.isNotEmpty()
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                            val pointerId = motionEvent.getPointerId(actionIndex)
-                            activeFretPointers.remove(pointerId)?.let(viewModel::onFretUp)
-                            activeFretPointers.isNotEmpty()
-                        }
-                        MotionEvent.ACTION_CANCEL -> {
-                            activeFretPointers.values.toSet().forEach(viewModel::onFretUp)
-                            activeFretPointers.clear()
-                            true
-                        }
-                        MotionEvent.ACTION_MOVE -> activeFretPointers.isNotEmpty()
-                        else -> activeFretPointers.isNotEmpty()
-                    }
-                }
                 .testTag(if (isDualMultiplayer) "multiplayer_dual_highways_canvas" else "single_highway_canvas")
         ) {
             val selectedTheme = viewModel.highwayThemes.find { it.id == stats.selectedHighwayThemeId }
@@ -293,6 +234,88 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 )
             }
         }
+
+        
+        // Botões de traste reais, alinhados à borda inferior da pista (sem duplicar alvos do Canvas).
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val density = LocalDensity.current
+            val canvasWidthPx = with(density) { maxWidth.toPx() }
+            val buttonSize = if (isDualMultiplayer) 30.dp else 42.dp
+            val trackWidthPx = if (isDualMultiplayer) {
+                (canvasWidthPx * 0.40f).coerceIn(230f, 410f)
+            } else {
+                (canvasWidthPx * 0.54f).coerceIn(390f, 650f)
+            }
+            val trackWidthDp = with(density) { trackWidthPx.toDp() }
+            val rowYOffset = maxHeight * if (isDualMultiplayer) 0.80f else 0.85f
+            val rowXOffset = if (isDualMultiplayer) {
+                with(density) { (-canvasWidthPx * 0.225f).toDp() }
+            } else 0.dp
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(x = rowXOffset, y = rowYOffset - buttonSize / 2)
+                    .width(trackWidthDp)
+                    .height(buttonSize),
+                horizontalArrangement = Arrangement.spacedBy(1.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(numLanes) { lane ->
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        GameplayFretButton(
+                            lane = lane,
+                            isPressed = activeFretLanes.contains(lane),
+                            isFlashing = activePickFlashes[lane]?.let {
+                                System.currentTimeMillis() - it in 0L..240L
+                            } == true,
+                            interactive = true,
+                            onDown = { viewModel.onFretDown(lane) },
+                            onUp = { viewModel.onFretUp(lane) },
+                            modifier = Modifier.size(buttonSize)
+                        )
+                    }
+                }
+            }
+
+            if (isDualMultiplayer) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(
+                            x = with(density) { (canvasWidthPx * 0.225f).toDp() },
+                            y = rowYOffset - buttonSize / 2
+                        )
+                        .width(trackWidthDp)
+                        .height(buttonSize),
+                    horizontalArrangement = Arrangement.spacedBy(1.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(partnerDifficulty.lanesUsed) { lane ->
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            GameplayFretButton(
+                                lane = lane,
+                                isPressed = partnerPressedLanes.contains(lane),
+                                isFlashing = partnerPickFlashes[lane]?.let {
+                                    System.currentTimeMillis() - it in 0L..240L
+                                } == true,
+                                interactive = false,
+                                onDown = {},
+                                onUp = {},
+                                modifier = Modifier.size(buttonSize)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
 
         // Top Left Track & Progress Info
         Column(
@@ -1263,3 +1286,64 @@ private fun VocalMelodyPitchBar(
     }
 }
 
+@Composable
+private fun GameplayFretButton(
+    lane: Int,
+    isPressed: Boolean,
+    isFlashing: Boolean,
+    interactive: Boolean,
+    onDown: () -> Unit,
+    onUp: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val laneColor = LaneColors[lane]
+    val glowAlpha = when {
+        isPressed -> 0.95f
+        isFlashing -> 0.78f
+        else -> 0.48f
+    }
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(Color(0xFF090A12))
+            .border(if (isPressed) 4.dp else 3.dp, Color(0xFFE6EAF2), CircleShape)
+            .then(
+                if (interactive) {
+                    Modifier.pointerInput(lane) {
+                        detectTapGestures(
+                            onPress = {
+                                onDown()
+                                tryAwaitRelease()
+                                onUp()
+                            }
+                        )
+                    }
+                } else Modifier
+            )
+            .testTag(if (interactive) "fret_touch_button_$lane" else "partner_fret_button_$lane"),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.76f)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (isPressed) 0.95f else 0.72f),
+                            laneColor.copy(alpha = glowAlpha),
+                            laneColor.copy(alpha = 0.90f),
+                            Color(0xFF171321)
+                        )
+                    )
+                )
+                .border(1.5.dp, laneColor.copy(alpha = 0.95f), CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.20f)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = if (isPressed || isFlashing) 1f else 0.82f))
+        )
+    }
+}
