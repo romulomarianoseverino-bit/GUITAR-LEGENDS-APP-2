@@ -303,10 +303,15 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                         .height(buttonSize)
                         .drawBehind {
                             val centerY = size.height * 0.5f
-                            val startX = size.height * 0.5f
-                            val endX = size.width - startX
-                            drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.26f)
-                            drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.08f)
+                            val laneWidth = size.width / numLanes
+                            // Um segmento curto por vão: a barra não atravessa o interior dos círculos.
+                            for (gap in 0 until numLanes - 1) {
+                                val boundaryX = laneWidth * (gap + 1)
+                                val startX = boundaryX - size.height * 0.5f
+                                val endX = boundaryX + size.height * 0.5f
+                                drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.22f)
+                                drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.055f)
+                            }
                         },
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1352,26 +1357,32 @@ private fun GameplayFretButton(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = if (isPressed) 1f else 0.82f),
+                            laneColor.copy(alpha = if (isPressed) 1f else 0.98f),
                             laneColor.copy(alpha = glowAlpha),
-                            laneColor.copy(alpha = 0.98f),
+                            laneColor.copy(alpha = 0.88f),
                             Color(0xFF171321)
                         )
                     )
                 )
                 .border(1.75.dp, laneColor.copy(alpha = 1f), CircleShape)
         )
-        // Núcleo central luminoso, reforçado durante o pressionamento.
+        // Pequeno núcleo claro no centro, sem formar um disco branco largo ou anel vazado.
+        val coreColor = when (lane) {
+            0 -> Color(0xFFE9FFF2)
+            1 -> Color(0xFFFFE9EC)
+            2 -> Color(0xFFFFFBE2)
+            else -> Color(0xFFF5F4FF)
+        }
         Box(
             modifier = Modifier
-                .fillMaxSize(0.29f)
+                .fillMaxSize(0.16f)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = if (isPressed || isFlashing) 1f else 0.92f))
-                .border(1.5.dp, laneColor.copy(alpha = 0.95f), CircleShape)
+                .background(coreColor.copy(alpha = if (isPressed || isFlashing) 1f else 0.96f))
+                .border(1.dp, laneColor.copy(alpha = 0.95f), CircleShape)
         )
         Box(
             modifier = Modifier
-                .fillMaxSize(0.105f)
+                .fillMaxSize(0.065f)
                 .clip(CircleShape)
                 .background(Color.White)
         )
