@@ -17,6 +17,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Repositório central de gerenciamento e persistência da Biblioteca Musical.
@@ -26,6 +28,9 @@ import java.util.UUID
  * - Grava o manifesto com substituição atômica por arquivo temporário e propagação real de falhas.
  */
 class MusicLibraryRepository(private val context: Context) {
+
+    // Serializa importações para impedir que dois arquivos iguais sejam gravados simultaneamente.
+    private val importMutex = Mutex()
 
     private val storageDir: File by lazy {
         File(context.filesDir, "imported_audio").apply {
@@ -67,7 +72,8 @@ class MusicLibraryRepository(private val context: Context) {
         AudioAnalyzer.BUILT_IN_TRACKS + verifiedImported
     }
 
-    suspend fun importAudio(uri: Uri): Result<Track> = withContext(Dispatchers.IO) {
+    suspend fun importAudio(uri: Uri): Result<Track> = importMutex.withLock {
+        withContext(Dispatchers.IO) {
         var copiedFile: File? = null
         try {
             val originalName = getDisplayName(uri) ?: return@withContext Result.failure(
@@ -213,6 +219,7 @@ class MusicLibraryRepository(private val context: Context) {
             copiedFile?.delete()
             Result.failure(Exception("Falha ao importar áudio: ${e.message}"))
         }
+        }
     }
 
     suspend fun updateTrackCalibration(
@@ -276,11 +283,43 @@ class MusicLibraryRepository(private val context: Context) {
     }
 
     suspend fun loadPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
-        loadPlaylistsInternal()
+        val tracks = loadAllTracks()
+        val stored = loadPlaylistsInternal()
+        val normalized = normalizePlaylistTracks(stored, tracks)
+        if (normalized != stored) savePlaylistsInternal(normalized)
+        normalized
     }
 
     suspend fun savePlaylists(playlists: List<Playlist>): Result<Unit> = withContext(Dispatchers.IO) {
-        savePlaylistsInternal(playlists)
+        val tracks = loadAllTracks()
+        savePlaylistsInternal(normalizePlaylistTracks(playlists, tracks))
+    }
+
+    /**
+     * Remove referências duplicadas por ID e por conteúdo de áudio.
+     * Mantém a primeira ocorrência e não compara títulos, evitando juntar músicas distintas.
+     */
+    private fun normalizePlaylistTracks(
+        playlists: List<Playlist>,
+        tracks: List<Track>
+    ): List<Playlist> {
+        val tracksById = tracks.associateBy { it.id }
+        return playlists.map { playlist ->
+            val seenIds = mutableSetOf<String>()
+            val seenHashes = mutableSetOf<String>()
+            val normalizedIds = playlist.trackIds.filter { trackId ->
+                if (!seenIds.add(trackId)) {
+                    false
+                } else {
+                    val hash = tracksById[trackId]?.contentHash
+                        ?.takeIf { it.isNotBlank() }
+                        ?.lowercase()
+                    hash == null || seenHashes.add(hash)
+                }
+            }
+            if (normalizedIds == playlist.trackIds) playlist
+            else playlist.copy(trackIds = normalizedIds, updatedAtMs = System.currentTimeMillis())
+        }
     }
 
     private fun loadPlaylistsInternal(): List<Playlist> {
