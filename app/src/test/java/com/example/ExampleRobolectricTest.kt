@@ -262,21 +262,26 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `04 - test repeated file names do not collide or overwrite previous tracks`() = runBlocking {
+    fun `04 - test identical audio is rejected even when imported again`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = MusicLibraryRepository(context)
-        val temp1 = createValidMp3File(context, "rock_anthem.mp3", 75_000)
+        val source = createValidMp3File(context, "rock_anthem.mp3", 75_000)
 
-        val track1 = repo.importAudio(Uri.fromFile(temp1)).getOrThrow()
-        val track2 = repo.importAudio(Uri.fromFile(temp1)).getOrThrow()
+        val firstImport = repo.importAudio(Uri.fromFile(source))
+        assertTrue("First import should succeed: ${firstImport.exceptionOrNull()?.message}", firstImport.isSuccess)
+        val canonicalTrack = firstImport.getOrThrow()
+        val canonicalPath = File(canonicalTrack.uriString!!)
 
-        assertNotEquals("IDs must be distinct", track1.id, track2.id)
-        assertNotEquals("Physical file paths must be distinct", track1.uriString, track2.uriString)
-        assertTrue(File(track1.uriString!!).exists())
-        assertTrue(File(track2.uriString!!).exists())
+        val duplicateImport = repo.importAudio(Uri.fromFile(source))
+        assertTrue("Identical audio must be rejected", duplicateImport.isFailure)
+        assertTrue(
+            "Duplicate warning should explain that the track is already in the library",
+            duplicateImport.exceptionOrNull()?.message?.contains("já está na biblioteca", ignoreCase = true) == true
+        )
+        assertTrue("Original imported track must remain intact", canonicalPath.exists())
+        assertEquals(1, repo.loadAllTracks().count { it.id == canonicalTrack.id })
 
-        repo.deleteTrack(track1)
-        repo.deleteTrack(track2)
+        repo.deleteTrack(canonicalTrack)
         Unit
     }
 

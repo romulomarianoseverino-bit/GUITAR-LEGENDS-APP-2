@@ -1,6 +1,5 @@
 package com.example.guitarlegends.ui.screens
 
-import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -18,9 +17,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -29,8 +28,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -53,7 +52,6 @@ import com.example.guitarlegends.viewmodel.GameViewModel
 import kotlin.math.cos
 import kotlin.math.sin
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     BackHandler {
@@ -237,6 +235,112 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 )
             }
         }
+
+        
+        // Botões de traste reais, alinhados à borda inferior da pista (sem duplicar alvos do Canvas).
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val density = LocalDensity.current
+            val canvasWidthPx = with(density) { maxWidth.toPx() }
+            val trackWidthPx = if (isDualMultiplayer) {
+                (canvasWidthPx * 0.40f).coerceIn(230f, 410f)
+            } else {
+                (canvasWidthPx * 0.54f).coerceIn(390f, 650f)
+            }
+            val trackWidthDp = with(density) { trackWidthPx.toDp() }
+            // Botões compactos: redução de 25% em relação ao tamanho-base anterior.
+            // Cada centro permanece no centro exato da respectiva coluna da pista.
+            val buttonSize = (trackWidthDp / numLanes * 0.90f * 0.75f).coerceIn(24.dp, 116.dp)
+            val rowYOffset = maxHeight * if (isDualMultiplayer) 0.80f else 0.85f
+            val rowXOffset = if (isDualMultiplayer) {
+                with(density) { (-canvasWidthPx * 0.225f).toDp() }
+            } else 0.dp
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(x = rowXOffset, y = rowYOffset - buttonSize / 2)
+                    .width(trackWidthDp)
+                    .height(buttonSize)
+                    .drawBehind {
+                        val centerY = size.height * 0.5f
+                        val laneWidth = size.width / numLanes
+                        // A barra liga os centros das colunas por baixo dos botões;
+                        // as faces opacas ocultam o trecho central de cada círculo.
+                        val startX = laneWidth * 0.5f
+                        val endX = size.width - startX
+                        drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.18f)
+                        drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.045f)
+                    },
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(numLanes) { lane ->
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        GameplayFretButton(
+                            lane = lane,
+                            isPressed = activeFretLanes.contains(lane),
+                            isFlashing = activePickFlashes[lane]?.let {
+                                System.currentTimeMillis() - it in 0L..240L
+                            } == true,
+                            interactive = true,
+                            onDown = { viewModel.onFretDown(lane) },
+                            onUp = { viewModel.onFretUp(lane) },
+                            modifier = Modifier.size(buttonSize)
+                        )
+                    }
+                }
+            }
+
+            if (isDualMultiplayer) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(
+                            x = with(density) { (canvasWidthPx * 0.225f).toDp() },
+                            y = rowYOffset - buttonSize / 2
+                        )
+                        .width(trackWidthDp)
+                        .height(buttonSize)
+                        .drawBehind {
+                            val centerY = size.height * 0.5f
+                            val laneWidth = size.width / numLanes
+                            // Um segmento curto por vão: a barra não atravessa o interior dos círculos.
+                            for (gap in 0 until numLanes - 1) {
+                                val boundaryX = laneWidth * (gap + 1)
+                                val startX = boundaryX - size.height * 0.5f
+                                val endX = boundaryX + size.height * 0.5f
+                                drawLine(Color(0xFF05060B), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.22f)
+                                drawLine(Color(0xFFBFC7D5), Offset(startX, centerY), Offset(endX, centerY), strokeWidth = size.height * 0.055f)
+                            }
+                        },
+                    horizontalArrangement = Arrangement.spacedBy(0.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(partnerDifficulty.lanesUsed) { lane ->
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            GameplayFretButton(
+                                lane = lane,
+                                isPressed = partnerPressedLanes.contains(lane),
+                                isFlashing = partnerPickFlashes[lane]?.let {
+                                    System.currentTimeMillis() - it in 0L..240L
+                                } == true,
+                                interactive = false,
+                                onDown = {},
+                                onUp = {},
+                                modifier = Modifier.size(buttonSize)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
 
         // Top Left Track & Progress Info
         Column(
@@ -505,6 +609,23 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     )
                 }
             }
+
+            // Controle de palhetada reposicionado junto aos controles laterais:
+            // mantém FRET_AND_STRUM sem ocupar a apresentação inferior da pista.
+            if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
+                Button(
+                    onClick = { viewModel.onStrumBar() },
+                    colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
+                    modifier = Modifier
+                        .width(126.dp)
+                        .height(38.dp)
+                        .testTag("strum_bar_button")
+                ) {
+                    Text("PALHETAR", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 10.sp)
+                }
+            }
         }
 
         // Right HUD: Hit Rating feedback + Classic Semicircular Rock Meter & 5 Star Power Vacuum Tubes
@@ -534,125 +655,14 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 }
             }
 
-            AnalogRockMeterWithTubes(
+            // Medidor de aprovação clássico modernizado: mantém a avaliação visível,
+            // sem exibir o antigo Rock Meter como elemento separado do HUD.
+            PerformanceApprovalGauge(
                 rockMeter = rockMeter,
-                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
-                showStarPowerTubes = strikeEnabled
+                starPowerEnergy = starPowerEnergy,
+                isStarPowerActive = isStarPowerActive,
+                showStarPowerTubes = false
             )
-        }
-
-        // Bottom Controls: Fret Strike Touch Buttons ligados visualmente (o--o--o--o) e adaptados à dificuldade
-        Box(
-            modifier = Modifier
-                .align(if (isDualMultiplayer) Alignment.BottomStart else Alignment.BottomCenter)
-                .padding(
-                    start = if (isDualMultiplayer) 16.dp else 0.dp,
-                    bottom = 10.dp
-                )
-                .fillMaxWidth(if (isDualMultiplayer) 0.56f else 0.80f)
-                .height(68.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Haste horizontal metálica conectando os botões receptores (o--o--o--o)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.84f)
-                    .height(6.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(Color(0xFF282238), Color(0xFFDDE2EB), Color(0xFF282238))),
-                        RoundedCornerShape(3.dp)
-                    )
-                    .border(1.dp, Color(0xFF14111D), RoundedCornerShape(3.dp))
-            )
-
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                for (lane in 0 until numLanes) {
-                    val color = LaneColors[lane]
-                    val isPressed = activeFretLanes.contains(lane)
-
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(CircleShape)
-                            .testTag("fret_touch_button_$lane")
-                            .pointerInteropFilter { motionEvent ->
-                                when (motionEvent.actionMasked) {
-                                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                                        viewModel.onFretDown(lane)
-                                        true
-                                    }
-                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                                        viewModel.onFretUp(lane)
-                                        true
-                                    }
-                                    else -> false
-                                }
-                            },
-                        color = if (isPressed) color.copy(alpha = 0.85f) else Color(0xCC161026),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = Brush.verticalGradient(
-                                listOf(Color(0xFFE6EAF2), color, Color(0xFF1A1426))
-                            ),
-                            width = if (isPressed) 4.dp else 3.dp
-                        ),
-                        shape = CircleShape
-                    ) {
-                        // Botão circular clássico limpo de traste (sem textos 'PISTA 1..5')
-                        Box(contentAlignment = Alignment.Center) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(
-                                        brush = Brush.radialGradient(
-                                            listOf(
-                                                Color.White.copy(alpha = if (isPressed) 0.98f else 0.72f),
-                                                color.copy(alpha = if (isPressed) 0.98f else 0.85f),
-                                                color.copy(alpha = 0.30f)
-                                            )
-                                        ),
-                                        shape = CircleShape
-                                    )
-                                    .border(
-                                        width = if (isPressed) 3.dp else 2.dp,
-                                        color = if (isPressed) Color.White else Color(0xFFE6EAF2),
-                                        shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .background(
-                                            color = if (isPressed) Color.White else Color.White.copy(alpha = 0.90f),
-                                            shape = CircleShape
-                                        )
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Optional Strum bar for Fret+Strum mode
-                if (stats.controlMode == ControlMode.FRET_AND_STRUM) {
-                    Button(
-                        onClick = { viewModel.onStrumBar() },
-                        colors = ButtonDefaults.buttonColors(containerColor = RockAccentGold),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .weight(1.15f)
-                            .fillMaxHeight()
-                            .testTag("strum_bar_button")
-                    ) {
-                        Text("PALHETA ⚡", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 11.sp)
-                    }
-                }
-            }
         }
 
         // Pause Menu Dialog Overlay (Ordem Exata: 1. Continuar, 2. Reiniciar música, 3. Controle de volume, 4. Próxima música, 5. Sair)
@@ -1014,11 +1024,11 @@ private fun GuitarAmpScoreCabinet(
 }
 
 /**
- * Medidor Analógico Semicircular "ROCK" com ponteiro móvel e 5 válvulas luminosas
+ * Medidor analógico semicircular de aprovação com ponteiro móvel e acabamento metálico
  * ciano de Energia Estrelar no topo, fiel à referência clássica de console.
  */
 @Composable
-private fun AnalogRockMeterWithTubes(
+private fun PerformanceApprovalGauge(
     rockMeter: Float,
     starPowerEnergy: Float,
     isStarPowerActive: Boolean,
@@ -1039,7 +1049,7 @@ private fun AnalogRockMeterWithTubes(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .width(114.dp)
-            .testTag("analog_rock_meter")
+            .testTag("performance_approval_gauge")
     ) {
         Box(
             modifier = Modifier
@@ -1185,7 +1195,7 @@ private fun AnalogRockMeterWithTubes(
             }
 
             Text(
-                text = "ROCK",
+                text = "APROVAÇÃO",
                 color = Color.Black,
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
@@ -1194,7 +1204,7 @@ private fun AnalogRockMeterWithTubes(
             )
         }
 
-        // Badge de status de vibração da plateia
+        // Faixa de leitura da aprovação atual
         Surface(
             color = Color(0xCC120D1D),
             shape = RoundedCornerShape(6.dp),
@@ -1304,3 +1314,116 @@ private fun VocalMelodyPitchBar(
     }
 }
 
+@Composable
+private fun GameplayFretButton(
+    lane: Int,
+    isPressed: Boolean,
+    isFlashing: Boolean,
+    interactive: Boolean,
+    onDown: () -> Unit,
+    onUp: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val laneColor = LaneColors[lane]
+    val glowAlpha = when {
+        isPressed -> 1.0f
+        isFlashing -> 0.94f
+        else -> 0.72f
+    }
+    val coreTint = when (lane) {
+        0 -> Color(0xFFE8FFF0)
+        1 -> Color(0xFFFFE9EC)
+        2 -> Color(0xFFFFF9D9)
+        else -> Color(0xFFEAF0FF)
+    }
+    val deepColor = when (lane) {
+        0 -> Color(0xFF004D2A)
+        1 -> Color(0xFF650B19)
+        2 -> Color(0xFF705000)
+        3 -> Color(0xFF092D70)
+        else -> Color(0xFF713000)
+    }
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFFEEF3FA), Color(0xFF555E6D), Color(0xFF11151E))
+                )
+            )
+            // Aro externo escuro mais fino, com bisel metálico discreto.
+            .border(if (isPressed) 5.dp else 4.5.dp, Color(0xFF020309), CircleShape)
+            .border(1.dp, Color(0xFFDCE5F2).copy(alpha = 0.88f), CircleShape)
+            .then(
+                if (interactive) {
+                    Modifier.pointerInput(lane) {
+                        detectTapGestures(
+                            onPress = {
+                                onDown()
+                                tryAwaitRelease()
+                                onUp()
+                            }
+                        )
+                    }
+                } else Modifier
+            )
+            .testTag(if (interactive) "fret_touch_button_$lane" else "partner_fret_button_$lane"),
+        contentAlignment = Alignment.Center
+    ) {
+        // Rebaixo preto entre o aro metálico e a face colorida, típico dos botões de ritmo.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.86f)
+                .clip(CircleShape)
+                .background(Color(0xFF080B12))
+                .border(1.5.dp, Color(0xFF687386), CircleShape)
+        )
+        // Face convexa: brilho no centro, cor saturada no corpo e sombra na borda.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.74f)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            laneColor.copy(alpha = glowAlpha),
+                            laneColor,
+                            deepColor
+                        )
+                    )
+                )
+                .border(2.dp, laneColor.copy(alpha = if (isPressed) 1f else 0.92f), CircleShape)
+        )
+        // Reflexo especular discreto no quadrante superior esquerdo para dar volume 3D.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.25f)
+                .align(Alignment.TopStart)
+                .offset(x = 12.dp, y = 12.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (isPressed) 0.72f else 0.42f),
+                            Color.White.copy(alpha = 0.12f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+        // Ponto central claro e compacto, sem anel escuro largo no miolo.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.13f)
+                .clip(CircleShape)
+                .background(coreTint.copy(alpha = if (isPressed || isFlashing) 1f else 0.96f))
+                .border(1.dp, Color.White.copy(alpha = 0.95f), CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.055f)
+                .clip(CircleShape)
+                .background(Color.White)
+        )
+    }
+}
