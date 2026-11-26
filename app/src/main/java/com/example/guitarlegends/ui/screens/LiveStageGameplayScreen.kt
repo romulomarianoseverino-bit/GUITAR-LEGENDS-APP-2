@@ -1324,16 +1324,33 @@ private fun GameplayFretButton(
     val laneColor = LaneColors[lane]
     val glowAlpha = when {
         isPressed -> 1.0f
-        isFlashing -> 0.88f
-        else -> 0.58f
+        isFlashing -> 0.94f
+        else -> 0.72f
+    }
+    val coreTint = when (lane) {
+        0 -> Color(0xFFE8FFF0)
+        1 -> Color(0xFFFFE9EC)
+        2 -> Color(0xFFFFF9D9)
+        else -> Color(0xFFEAF0FF)
+    }
+    val deepColor = when (lane) {
+        0 -> Color(0xFF004D2A)
+        1 -> Color(0xFF650B19)
+        2 -> Color(0xFF705000)
+        3 -> Color(0xFF092D70)
+        else -> Color(0xFF713000)
     }
     Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(Color(0xFF05060B))
-            // Anel externo escuro espesso, com filete claro discreto na borda.
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFFEEF3FA), Color(0xFF555E6D), Color(0xFF11151E))
+                )
+            )
+            // Aro externo escuro e bisel metálico fino, preservando o diâmetro original.
             .border(if (isPressed) 8.dp else 7.dp, Color(0xFF020309), CircleShape)
-            .border(1.25.dp, Color(0xFFCAD2DF).copy(alpha = 0.82f), CircleShape)
+            .border(1.25.dp, Color(0xFFDCE5F2).copy(alpha = 0.88f), CircleShape)
             .then(
                 if (interactive) {
                     Modifier.pointerInput(lane) {
@@ -1350,39 +1367,59 @@ private fun GameplayFretButton(
             .testTag(if (interactive) "fret_touch_button_$lane" else "partner_fret_button_$lane"),
         contentAlignment = Alignment.Center
     ) {
+        // Rebaixo preto entre o aro metálico e a face colorida, típico dos botões de ritmo.
         Box(
             modifier = Modifier
-                .fillMaxSize(0.72f)
+                .fillMaxSize(0.86f)
+                .clip(CircleShape)
+                .background(Color(0xFF080B12))
+                .border(1.5.dp, Color(0xFF687386), CircleShape)
+        )
+        // Face convexa: brilho no centro, cor saturada no corpo e sombra na borda.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.74f)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            laneColor.copy(alpha = if (isPressed) 1f else 0.98f),
+                            coreTint.copy(alpha = if (isPressed) 1f else 0.94f),
                             laneColor.copy(alpha = glowAlpha),
-                            laneColor.copy(alpha = 0.88f),
-                            Color(0xFF171321)
+                            laneColor,
+                            deepColor
                         )
                     )
                 )
-                .border(1.75.dp, laneColor.copy(alpha = 1f), CircleShape)
+                .border(2.dp, laneColor.copy(alpha = if (isPressed) 1f else 0.92f), CircleShape)
         )
-        // Pequeno núcleo claro no centro, sem formar um disco branco largo ou anel vazado.
-        val coreColor = when (lane) {
-            0 -> Color(0xFFE9FFF2)
-            1 -> Color(0xFFFFE9EC)
-            2 -> Color(0xFFFFFBE2)
-            else -> Color(0xFFF5F4FF)
-        }
+        // Reflexo especular discreto no quadrante superior esquerdo para dar volume 3D.
         Box(
             modifier = Modifier
-                .fillMaxSize(0.16f)
+                .fillMaxSize(0.25f)
+                .align(Alignment.TopStart)
+                .offset(x = 12.dp, y = 12.dp)
                 .clip(CircleShape)
-                .background(coreColor.copy(alpha = if (isPressed || isFlashing) 1f else 0.96f))
-                .border(1.dp, laneColor.copy(alpha = 0.95f), CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (isPressed) 0.72f else 0.42f),
+                            Color.White.copy(alpha = 0.12f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+        // Ponto central claro e compacto, sem anel escuro largo no miolo.
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.13f)
+                .clip(CircleShape)
+                .background(coreTint.copy(alpha = if (isPressed || isFlashing) 1f else 0.96f))
+                .border(1.dp, Color.White.copy(alpha = 0.95f), CircleShape)
         )
         Box(
             modifier = Modifier
-                .fillMaxSize(0.065f)
+                .fillMaxSize(0.055f)
                 .clip(CircleShape)
                 .background(Color.White)
         )
