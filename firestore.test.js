@@ -463,10 +463,22 @@ test("Strike System & Daily Weekly Cap: rules enforce host lock on PLAYING and <
   // 2. Strike System room pre-match toggle allowed in WAITING by host, denied by guest, locked in PLAYING
   const roomCode = "STRK-2026";
   const aliceRoomRef = aliceDb.collection("multiplayer_rooms").doc(roomCode);
-  await assertSucceeds(
+  await assertFails(
     aliceRoomRef.set({
       ...makeValidRoom(roomCode, ALICE_UID, "BATTLE_1V1", 2),
       strikeEnabled: true,
+    })
+  );
+  await assertSucceeds(aliceRoomRef.set(makeValidRoom(roomCode, ALICE_UID, "BATTLE_1V1", 2)));
+  const aliceParticipant = aliceRoomRef.collection("participants").doc(ALICE_UID);
+  await assertSucceeds(aliceParticipant.set({
+    ...makeValidParticipant(roomCode, ALICE_UID, "AliceHost"),
+    strikeConsent: true,
+  }));
+  await assertSucceeds(
+    aliceRoomRef.update({
+      strikeEnabled: true,
+      updatedAt: serverTimestamp(),
     })
   );
   await assertSucceeds(
