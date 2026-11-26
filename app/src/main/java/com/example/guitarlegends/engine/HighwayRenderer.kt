@@ -106,7 +106,7 @@ data class HighwayGeometry(
 
 fun computeHighwayLaneNormalizedOffset(lane: Int, numLanes: Int): Float {
     val rawOffset = ((lane + 0.5f) / numLanes.toFloat()) - 0.5f
-    return rawOffset * 1.07f
+    return rawOffset
 }
 
 fun computeSingleHighwayGeometry(
@@ -342,9 +342,10 @@ private fun drawSinglePerspectiveHighway(
     val topHalfW = topWidth * 0.5f
     val bottomHalfW = bottomWidth * 0.5f
 
-    val rxTarget = (bottomWidth / numLanes) * 0.432f
+    val rxTarget = (bottomWidth / numLanes) * 0.36f
     val ryTarget = rxTarget * 0.65f
-    val bottomEdgeY = strikeY + ryTarget * 0.82f
+    // Margem extra para manter o receptor e o brilho totalmente dentro da borda inferior da pista.
+    val bottomEdgeY = strikeY + ryTarget * 1.08f
 
     val highwayTopLeft = Offset(topCenterX - topHalfW, horizonY)
     val highwayTopRight = Offset(topCenterX + topHalfW, horizonY)
