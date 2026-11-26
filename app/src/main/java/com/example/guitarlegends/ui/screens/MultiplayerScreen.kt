@@ -51,6 +51,8 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val connectionWarning by viewModel.multiplayerConnectionWarning.collectAsState()
     val tracks by viewModel.tracks.collectAsState()
     val selectedTrack by viewModel.selectedTrackFlow.collectAsState()
+    val selectedInstrument by viewModel.selectedInstrumentFlow.collectAsState()
+    val selectedDifficulty by viewModel.selectedDifficultyFlow.collectAsState()
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
     val effectiveStrikeEnabled = room?.strikeEnabled ?: localStrikeEnabled
 
