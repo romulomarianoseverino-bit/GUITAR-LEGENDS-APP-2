@@ -13,6 +13,7 @@ import com.google.firebase.firestore.MemoryCacheSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
@@ -20,6 +21,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -29,6 +31,7 @@ abstract class FirestoreEmulatorTestBase {
     protected lateinit var firestore: FirebaseFirestore
     protected lateinit var auth: FirebaseAuth
     protected lateinit var databaseId: String
+    private lateinit var firebaseApp: FirebaseApp
 
     @Before
     open fun setUpFirebase() {
@@ -36,34 +39,36 @@ abstract class FirestoreEmulatorTestBase {
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
         databaseId = if (resId != 0) context.getString(resId) else "demo-database"
 
-        val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            FirebaseApp.initializeApp(
-                context,
-                FirebaseOptions.Builder()
-                    .setApplicationId("com.aistudio.applet.kpfcic")
-                    .setProjectId(PROJECT_ID)
-                    .setApiKey("fake-api-key-for-emulator")
-                    .build()
-            )
-        } else {
-            FirebaseApp.getInstance()
-        }
+        // Cada teste recebe um FirebaseApp exclusivo. O Firestore não permite
+        // configurar o emulador novamente depois que a instância já iniciou operações;
+        // reutilizar o app padrão entre testes causava falhas intermitentes de inicialização.
+        firebaseApp = FirebaseApp.initializeApp(
+            context,
+            FirebaseOptions.Builder()
+                .setApplicationId("com.aistudio.applet.kpfcic")
+                .setProjectId(PROJECT_ID)
+                .setApiKey("fake-api-key-for-emulator")
+                .build(),
+            "guitar-legends-test-${UUID.randomUUID()}"
+        )
 
-        // O google-services.json inicializa automaticamente o FirebaseApp em alguns testes.
-        // Mesmo nesse caso, Auth e Firestore precisam apontar para os emuladores antes do primeiro uso.
-        firestore = FirebaseFirestore.getInstance(app, databaseId)
+        firestore = FirebaseFirestore.getInstance(firebaseApp, databaseId)
         firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
         firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
             .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
             .build()
 
-        auth = FirebaseAuth.getInstance(app)
+        auth = FirebaseAuth.getInstance(firebaseApp)
         auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
     }
 
     @After
     open fun tearDownFirebase() {
         auth.signOut()
+        runBlocking(Dispatchers.IO) {
+            runCatching { firestore.terminate().await() }
+            firebaseApp.delete()
+        }
     }
 
     // Helper exclusivo para testes locais contra o Auth Emulator.
