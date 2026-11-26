@@ -323,7 +323,8 @@ service cloud.firestore {
                          'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
                          'winnerUid', 'inviteMessage', 'strikeEnabled', 'createdAt', 'updatedAt'
                        ]) &&
-                       isValidMultiplayerRoom(incoming(), roomCode);
+                       isValidMultiplayerRoom(incoming(), roomCode) &&
+                       (!('strikeEnabled' in incoming()) || incoming().strikeEnabled == false);
 
       allow update: if isSignedIn() &&
                        isValidRoomCode(roomCode) &&
