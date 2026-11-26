@@ -144,11 +144,11 @@ class MusicLibraryRepository(private val context: Context) {
 
             val contentHash = sha256(targetFile)
             val manifestTracks = loadImportedTracksFromManifest()
-            val existingTracks = manifestTracks.map { existing ->
+            val existingTracks = manifestTracks.mapNotNull { existing ->
                 val existingFile = existing.uriString?.let(::File)
-                if (existing.contentHash.isBlank() && existingFile != null &&
-                    existingFile.exists() && existingFile.length() > 0L
-                ) {
+                if (existingFile == null || !existingFile.exists() || existingFile.length() <= 0L) {
+                    null
+                } else if (existing.contentHash.isBlank()) {
                     existing.copy(contentHash = sha256(existingFile))
                 } else existing
             }
