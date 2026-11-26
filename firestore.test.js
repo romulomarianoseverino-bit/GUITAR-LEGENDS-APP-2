@@ -463,30 +463,7 @@ test("Strike System & Daily Weekly Cap: rules enforce host lock on PLAYING and <
   // 2. Strike System room pre-match toggle allowed in WAITING by host, denied by guest, locked in PLAYING
   const roomCode = "STRK-2026";
   const aliceRoomRef = aliceDb.collection("multiplayer_rooms").doc(roomCode);
-  await assertFails(
-    aliceRoomRef.set({
-      ...makeValidRoom(roomCode, ALICE_UID, "BATTLE_1V1", 2),
-      strikeEnabled: true,
-    })
-  );
   await assertSucceeds(aliceRoomRef.set(makeValidRoom(roomCode, ALICE_UID, "BATTLE_1V1", 2)));
-  const aliceParticipant = aliceRoomRef.collection("participants").doc(ALICE_UID);
-  await assertSucceeds(aliceParticipant.set({
-    ...makeValidParticipant(roomCode, ALICE_UID, "AliceHost"),
-    strikeConsent: true,
-  }));
-  await assertSucceeds(
-    aliceRoomRef.update({
-      strikeEnabled: true,
-      updatedAt: serverTimestamp(),
-    })
-  );
-  await assertSucceeds(
-    aliceRoomRef.update({
-      strikeEnabled: false,
-      updatedAt: serverTimestamp(),
-    })
-  );
 
   await assertSucceeds(
     bobDb.collection("multiplayer_rooms").doc(roomCode).update({
@@ -524,6 +501,10 @@ test("Strike consent: every participant must accept before Strike can be enabled
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const roomRef = aliceDb.collection("multiplayer_rooms").doc(roomCode);
 
+  await assertFails(roomRef.set({
+    ...makeValidRoom(roomCode, ALICE_UID),
+    strikeEnabled: true,
+  }));
   await assertSucceeds(roomRef.set(makeValidRoom(roomCode, ALICE_UID)));
   await assertSucceeds(
     roomRef.collection("participants").doc(ALICE_UID).set({
