@@ -51,6 +51,7 @@ class MusicLibraryRepository(private val context: Context) {
     suspend fun loadAllTracks(): List<Track> = withContext(Dispatchers.IO) {
         val importedTracks = loadImportedTracksFromManifest()
         val verifiedImported = mutableListOf<Track>()
+        val seenContentHashes = mutableSetOf<String>()
 
         for (track in importedTracks) {
             val uriStr = track.uriString
@@ -60,7 +61,11 @@ class MusicLibraryRepository(private val context: Context) {
                     val fingerprinted = if (track.contentHash.isBlank()) {
                         track.copy(contentHash = sha256(file))
                     } else track
-                    verifiedImported.add(fingerprinted)
+                    val fingerprint = fingerprinted.contentHash.lowercase()
+                    // Corrige também duplicatas que já estavam gravadas no manifesto.
+                    if (fingerprint.isBlank() || seenContentHashes.add(fingerprint)) {
+                        verifiedImported.add(fingerprinted)
+                    }
                 }
             }
         }
