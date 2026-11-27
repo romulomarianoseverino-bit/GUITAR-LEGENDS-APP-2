@@ -2252,6 +2252,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
         audioPlayer.stop()
         gameLoopJob?.cancel()
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
 
         val totalNotesCount = (totalHitCount + totalMissCount).coerceAtLeast(1)
         val accuracy = (totalHitCount.toFloat() / totalNotesCount.toFloat()) * 100f
@@ -3145,6 +3147,14 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
     fun leaveMultiplayerRoom() {
         val roomCode = _multiplayerRoom.value?.roomCode
+        audioTransferJob?.cancel()
+        _pendingRoomAudioChoice.value?.file?.delete()
+        _pendingRoomAudioChoice.value = null
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
+        _isRoomAudioReady.value = true
+        _isRoomAudioTransferLoading.value = false
+        lastPreparedAudioTransferId = ""
         stopRoomObserversOnly()
         _multiplayerRoom.value = null
         _multiplayerParticipants.value = emptyList()
