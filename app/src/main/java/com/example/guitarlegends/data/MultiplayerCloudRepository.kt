@@ -5,6 +5,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -377,12 +378,20 @@ class MultiplayerCloudRepository(
         val path = "multiplayer_rooms/$normalized/strikes"
         return try {
             val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
-            val room = roomRef.get().await().toObject(MultiplayerRoomCloud::class.java)
+            // A validação do Strike depende do estado atual da partida; não aceite cache antigo.
+            val room = roomRef.get(Source.SERVER).await().toObject(MultiplayerRoomCloud::class.java)
                 ?: throw IllegalStateException("Sala não encontrada.")
-            if (room.statusEnum != RoomStatus.PLAYING || !room.strikeEnabled ||
-                uid !in room.memberUids || targetUid !in room.memberUids
-            ) {
-                throw IllegalStateException("Strike indisponível: confirme o consentimento de todos os jogadores.")
+            if (room.statusEnum != RoomStatus.PLAYING) {
+                throw IllegalStateException("A partida ainda não está em andamento.")
+            }
+            if (!room.strikeEnabled) {
+                throw IllegalStateException("O anfitrião não habilitou o Strike nesta sala.")
+            }
+            if (uid !in room.memberUids) {
+                throw IllegalStateException("Seu jogador não consta mais na lista de participantes da sala.")
+            }
+            if (targetUid !in room.memberUids) {
+                throw IllegalStateException("O jogador escolhido não consta mais na lista de participantes.")
             }
             val ref = roomRef.collection("strikes").document()
             ref.set(
