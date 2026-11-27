@@ -68,19 +68,22 @@ class MusicLibraryRepository(private val context: Context) {
             }
         }
 
-        if (verifiedImported.size != importedTracks.size) {
+        val manifestSaved = if (verifiedImported.size != importedTracks.size) {
             saveManifest(verifiedImported)
-        }
-        if (duplicateIds.isNotEmpty()) {
+        } else Result.success(Unit)
+
+        if (duplicateIds.isNotEmpty() && manifestSaved.isSuccess) {
             val remappedPlaylists = loadPlaylistsInternal().map { playlist ->
                 playlist.copy(
                     trackIds = playlist.trackIds.map { duplicateIds[it] ?: it }.distinct(),
                     updatedAtMs = System.currentTimeMillis()
                 )
             }
-            savePlaylistsInternal(remappedPlaylists)
-            duplicateFiles.forEach { file ->
-                if (file.parentFile == storageDir) runCatching { file.delete() }
+            val playlistsSaved = savePlaylistsInternal(remappedPlaylists)
+            if (playlistsSaved.isSuccess) {
+                duplicateFiles.forEach { file ->
+                    if (file.parentFile == storageDir) runCatching { file.delete() }
+                }
             }
         }
 
