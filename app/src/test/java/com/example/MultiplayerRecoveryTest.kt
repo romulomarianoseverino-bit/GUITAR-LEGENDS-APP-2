@@ -57,6 +57,9 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
     @Before
     fun cleanLocalState() {
         app = ApplicationProvider.getApplicationContext()
+        // Cada teste começa como visitante; evita que a autenticação Firebase
+        // de um teste anterior altere a interface esperada neste cenário.
+        FirebaseAuth.getInstance().signOut()
         File(app.filesDir, "local_player_progress.json").delete()
         File(app.filesDir, "local_player_progress.json.tmp").delete()
     }
