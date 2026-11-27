@@ -42,6 +42,8 @@ data class MultiplayerRoomCloud(
     val winnerUid: String = "",
     val inviteMessage: String = "",
     val strikeEnabled: Boolean = true,
+    val audioTransferId: String = "",
+    val trackFingerprint: String = "",
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     @ServerTimestamp
@@ -66,6 +68,8 @@ data class MultiplayerRoomCloud(
         "winnerUid" to winnerUid.take(128),
         "inviteMessage" to inviteMessage.take(160),
         "strikeEnabled" to strikeEnabled,
+        "audioTransferId" to audioTransferId.take(64),
+        "trackFingerprint" to trackFingerprint.take(64),
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )
