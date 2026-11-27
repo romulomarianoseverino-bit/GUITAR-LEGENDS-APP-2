@@ -65,17 +65,14 @@ class FriendsCloudRepository(
             if (targetUid.isBlank()) throw IllegalArgumentException("Nenhum jogador encontrado com esse nickname.")
             if (targetUid == uid) throw IllegalArgumentException("Você não pode adicionar sua própria conta.")
             val myAccount = firestore.collection("users").document(uid).get().await()
-            val targetAccount = firestore.collection("users").document(targetUid).get().await()
             val myNickname = myAccount.getString("nickname").orEmpty().ifBlank { "Jogador" }
-            val targetNickname = targetAccount.getString("nickname").orEmpty().ifBlank { nickname.trim() }
+            val targetNickname = nickSnap.getString("nickname").orEmpty().ifBlank { nickname.trim() }
             val requestRef = firestore.collection("friend_requests").document(pairId(uid, targetUid))
             val myBlock = firestore.collection("users").document(uid).collection("blocked").document(targetUid)
-            val theirBlock = firestore.collection("users").document(targetUid).collection("blocked").document(uid)
             firestore.runTransaction { tx ->
                 val existing = tx.get(requestRef)
                 val blockedByMe = tx.get(myBlock).exists()
-                val blockedByThem = tx.get(theirBlock).exists()
-                if (blockedByMe || blockedByThem) throw IllegalStateException("Não é possível enviar solicitação para este jogador.")
+                if (blockedByMe) throw IllegalStateException("Não é possível enviar solicitação para este jogador.")
                 if (existing.exists() && existing.getString("status") == "ACCEPTED") {
                     throw IllegalStateException("Este jogador já está na sua lista de amigos.")
                 }
