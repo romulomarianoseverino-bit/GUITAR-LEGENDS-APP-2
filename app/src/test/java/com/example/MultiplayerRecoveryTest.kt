@@ -237,13 +237,13 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
         awaitWithMainLooper {
-            bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = true).getOrThrow()
+            bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = false).getOrThrow()
             bobRepo.updateParticipantProgress(roomCode, score = 18500, combo = 27, rockMeter = 0.88f, starPowerActive = true).getOrThrow()
         }
         vm.updateMultiplayerTrack(AudioAnalyzer.BUILT_IN_TRACKS[1])
 
         waitUntilWithMainLooper {
-            vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == true &&
+            vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == false &&
                 vm.multiplayerRoom.value?.trackId == AudioAnalyzer.BUILT_IN_TRACKS[1].id
         }
         assertEquals(18500, vm.multiplayerParticipants.value.find { it.userId == bobUid }?.score)
@@ -266,9 +266,13 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
         awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
+            bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = true).getOrThrow()
             bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
         }
-        waitUntilWithMainLooper { vm.isStrikeEnabledForCurrentMatch() }
+        waitUntilWithMainLooper {
+            vm.isStrikeEnabledForCurrentMatch() &&
+                vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == true
+        }
         vm.startMultiplayerMatch()
         waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
 
