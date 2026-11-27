@@ -257,16 +257,13 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
         awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
+            bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
         }
+        waitUntilWithMainLooper { vm.isStrikeEnabledForCurrentMatch() }
         vm.startMultiplayerMatch()
         waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
 
         // 7. Strike só é liberado com consentimento de todos; ataques funcionam nos dois sentidos.
-        awaitWithMainLooper {
-            bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
-        }
-        waitUntilWithMainLooper { vm.isStrikeEnabledForCurrentMatch() }
-
         val bobAttackId = awaitWithMainLooper {
             bobRepo.sendStrike(roomCode, aliceUid, "LANE_INVERSION").getOrThrow()
         }
