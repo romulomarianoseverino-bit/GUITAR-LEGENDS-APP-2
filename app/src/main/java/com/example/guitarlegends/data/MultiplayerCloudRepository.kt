@@ -218,7 +218,7 @@ class MultiplayerCloudRepository(
                 }
                 // Não propague ao jogo um estado que ainda existe somente no cache local.
                 // O outro participante só pode iniciar quando a alteração estiver confirmada.
-                if (snap?.metadata?.hasPendingWrites == true) {
+                if (snap?.metadata?.hasPendingWrites() == true) {
                     return@addSnapshotListener
                 }
                 val room = if (snap != null && snap.exists()) {
