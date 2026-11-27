@@ -121,6 +121,7 @@ class MusicLibraryRepository(private val context: Context) {
 
     suspend fun importAudio(uri: Uri): Result<Track> = withContext(Dispatchers.IO) {
         var copiedFile: File? = null
+        var persistedUriString: String? = null
         try {
             val originalName = getDisplayName(uri) ?: return@withContext Result.failure(
                 IllegalArgumentException("Não foi possível identificar o nome do arquivo selecionado.")
@@ -145,12 +146,7 @@ class MusicLibraryRepository(private val context: Context) {
             val incomingDigest = context.contentResolver.openInputStream(uri)?.use(::sha256)
                 ?: return@withContext Result.failure(Exception("Não foi possível ler o áudio para verificar duplicidade."))
             val duplicate = loadImportedTracksFromManifest().firstOrNull { existing ->
-                val existingPath = existing.uriString
-                if (existingPath.isNullOrBlank()) false
-                else {
-                    val existingFile = File(existingPath)
-                    existingFile.exists() && existingFile.length() > 0L && sha256(existingFile) == incomingDigest
-                }
+                sha256Track(existing.uriString) == incomingDigest
             }
             if (duplicate != null) return@withContext Result.success(duplicate)
 
@@ -218,6 +214,8 @@ class MusicLibraryRepository(private val context: Context) {
                 else -> AudioClassification.MUSIC_FULL
             }
 
+            persistedUriString = persistToSharedMusic(targetFile, sanitizedName, mimeType)
+
             val track = Track(
                 id = uniqueId,
                 title = finalTitle,
@@ -226,7 +224,7 @@ class MusicLibraryRepository(private val context: Context) {
                 bpm = analysis.bpm,
                 genre = "Arquivo Pessoal (${extension.uppercase()})",
                 isBuiltIn = false,
-                uriString = targetFile.absolutePath,
+                uriString = persistedUriString,
                 bpmConfidence = analysis.bpmConfidence,
                 bpmIsEstimated = analysis.bpmIsEstimated,
                 onsetTimesMs = analysis.onsetTimesMs,
@@ -245,8 +243,13 @@ class MusicLibraryRepository(private val context: Context) {
                 )
             }
 
+            if (persistedUriString != targetFile.absolutePath) {
+                targetFile.delete()
+                copiedFile = null
+            }
             Result.success(track)
         } catch (e: Exception) {
+            persistedUriString?.takeIf { it.startsWith("content://") }?.let(::deleteStoredUri)
             copiedFile?.delete()
             Result.failure(Exception("Falha ao importar áudio: ${e.message}"))
         }
