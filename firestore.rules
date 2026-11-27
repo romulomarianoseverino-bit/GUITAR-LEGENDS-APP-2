@@ -406,7 +406,9 @@ service cloud.firestore {
                            'nickname', 'instrument', 'difficulty', 'ready',
                            'connectionState', 'score', 'combo', 'rockMeter',
                            'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'updatedAt'
-                         ]);
+                         ]) &&
+                         (!('strikeConsent' in incoming().diff(existing()).affectedKeys()) ||
+                           get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'WAITING');
 
         allow delete: if isSignedIn() &&
                          isValidRoomCode(roomCode) &&
