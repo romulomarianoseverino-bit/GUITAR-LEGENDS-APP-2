@@ -460,7 +460,7 @@ service cloud.firestore {
           incoming().targetUid == existing().targetUid &&
           incoming().power == existing().power &&
           incoming().createdAtMs == existing().createdAtMs &&
-          incoming().status == 'DEFENDED' &&
+          incoming().status in ['DEFENDED', 'APPLIED'] &&
           incoming().resolvedAtMs is int &&
           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolvedAtMs']);
 
