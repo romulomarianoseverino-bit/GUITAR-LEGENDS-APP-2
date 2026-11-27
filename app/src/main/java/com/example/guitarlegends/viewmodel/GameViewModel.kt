@@ -2508,6 +2508,110 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
     }
 
+    private fun prepareRoomAudio(room: MultiplayerRoomCloud) {
+        val repo = multiplayerRepo ?: return
+        val uid = repo.currentUidOrNull() ?: return
+        if (room.hostUid == uid) {
+            _isRoomAudioReady.value = true
+            return
+        }
+
+        val exactLocalTrack = _tracks.value.firstOrNull { it.id == room.trackId }
+        if (exactLocalTrack != null) {
+            selectTrack(exactLocalTrack)
+            _isRoomAudioReady.value = true
+            _pendingRoomAudioChoice.value = null
+            return
+        }
+
+        _isRoomAudioReady.value = false
+        if (room.audioTransferId.isBlank()) {
+            _multiplayerError.value = "O anfitrião ainda não disponibilizou o áudio desta faixa."
+            return
+        }
+        if (lastPreparedAudioTransferId == room.audioTransferId &&
+            (_pendingRoomAudioChoice.value?.transfer?.id == room.audioTransferId || _isRoomAudioTransferLoading.value)
+        ) return
+
+        lastPreparedAudioTransferId = room.audioTransferId
+        audioTransferJob?.cancel()
+        audioTransferJob = viewModelScope.launch {
+            _isRoomAudioTransferLoading.value = true
+            _multiplayerError.value = null
+            try {
+                val transferRepo = audioTransferRepo
+                    ?: throw IllegalStateException("Transferência de áudio multiplayer indisponível.")
+                if (room.trackFingerprint.isNotBlank()) {
+                    val matchingTrack = _tracks.value.firstOrNull { track ->
+                        !track.isBuiltIn && transferRepo.fingerprint(track).getOrNull() == room.trackFingerprint
+                    }
+                    if (matchingTrack != null) {
+                        selectTrack(matchingTrack)
+                        _isRoomAudioReady.value = true
+                        _pendingRoomAudioChoice.value = null
+                        temporaryRoomAudioFile?.delete()
+                        temporaryRoomAudioFile = null
+                        return@launch
+                    }
+                }
+
+                val downloaded = transferRepo.downloadToCache(room.roomCode, room.audioTransferId)
+                    .getOrThrow()
+                temporaryRoomAudioFile?.delete()
+                temporaryRoomAudioFile = null
+                _pendingRoomAudioChoice.value = PendingRoomAudioChoice(
+                    transfer = downloaded.first,
+                    file = downloaded.second
+                )
+            } catch (error: Exception) {
+                _multiplayerError.value = error.message ?: "Não foi possível receber a música do anfitrião."
+            } finally {
+                _isRoomAudioTransferLoading.value = false
+            }
+        }
+    }
+
+    fun useReceivedRoomAudioTemporarily() {
+        val pending = _pendingRoomAudioChoice.value ?: return
+        viewModelScope.launch {
+            val result = musicLibraryRepository.createTemporaryTrack(
+                audioFile = pending.file,
+                title = pending.transfer.title,
+                artist = pending.transfer.artist,
+                mimeType = pending.transfer.mimeType
+            )
+            result.onSuccess { track ->
+                temporaryRoomAudioFile?.delete()
+                temporaryRoomAudioFile = pending.file
+                selectTrack(track)
+                _pendingRoomAudioChoice.value = null
+                _isRoomAudioReady.value = true
+                _multiplayerError.value = "Áudio preparado somente para esta partida. Ele será removido ao sair."
+            }.onFailure { error ->
+                _multiplayerError.value = error.message ?: "Não foi possível preparar o áudio temporário."
+            }
+        }
+    }
+
+    fun saveReceivedRoomAudioToLibrary() {
+        val pending = _pendingRoomAudioChoice.value ?: return
+        viewModelScope.launch {
+            val result = musicLibraryRepository.importAudio(Uri.fromFile(pending.file))
+            result.onSuccess { imported ->
+                val refreshed = musicLibraryRepository.loadAllTracks()
+                _tracks.value = refreshed
+                val storedTrack = refreshed.firstOrNull { it.id == imported.id } ?: imported
+                selectTrack(storedTrack)
+                pending.file.delete()
+                _pendingRoomAudioChoice.value = null
+                _isRoomAudioReady.value = true
+                _multiplayerError.value = "Música adicionada permanentemente à biblioteca do Guitar Legends."
+            }.onFailure { error ->
+                _multiplayerError.value = error.message ?: "Não foi possível adicionar a música à biblioteca."
+            }
+        }
+    }
+
     fun updateMultiplayerTrack(track: Track) {
         selectTrack(track)
         val room = _multiplayerRoom.value ?: return
