@@ -45,6 +45,19 @@ jobs:
           firebase emulators:exec --project demo-no-project --only auth,firestore \
             'gradle --no-daemon testDebugUnitTest --stacktrace'
 
+      - name: Criar chave temporária de depuração
+        if: success()
+        run: |
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
       - name: Compilar APK de depuração após os testes
         if: success()
         run: gradle --no-daemon assembleDebug
