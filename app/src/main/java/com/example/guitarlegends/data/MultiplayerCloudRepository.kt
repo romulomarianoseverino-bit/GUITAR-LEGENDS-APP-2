@@ -4,6 +4,7 @@ import com.example.guitarlegends.model.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
@@ -210,9 +211,14 @@ class MultiplayerCloudRepository(
         }
         val listener = firestore.collection("multiplayer_rooms")
             .document(normalized)
-            .addSnapshotListener { snap, error ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snap, error ->
                 if (error != null) {
                     close(error)
+                    return@addSnapshotListener
+                }
+                // Não propague ao jogo um estado que ainda existe somente no cache local.
+                // O outro participante só pode iniciar quando a alteração estiver confirmada.
+                if (snap?.metadata?.hasPendingWrites == true) {
                     return@addSnapshotListener
                 }
                 val room = if (snap != null && snap.exists()) {
