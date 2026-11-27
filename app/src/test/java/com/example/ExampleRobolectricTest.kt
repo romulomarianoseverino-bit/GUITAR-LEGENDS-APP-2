@@ -205,8 +205,23 @@ class ExampleRobolectricTest {
         return file
     }
 
+    private fun trackUriExists(context: Context, uriString: String): Boolean =
+        if (uriString.startsWith("content://")) {
+            runCatching {
+                context.contentResolver.openInputStream(Uri.parse(uriString))?.use { it.read() >= 0 } == true
+            }.getOrDefault(false)
+        } else File(uriString).exists()
+
+    private fun deleteTrackUri(context: Context, uriString: String) {
+        if (uriString.startsWith("content://")) {
+            context.contentResolver.delete(Uri.parse(uriString), null, null)
+        } else {
+            File(uriString).delete()
+        }
+    }
+
     @Test
-    fun `01 - test import MP3 file permanent private storage and manifest persistence`() = runBlocking {
+    fun `01 - test import MP3 file persists in shared Music folder and manifest`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = MusicLibraryRepository(context)
         val tempMp3 = createValidMp3File(context, "epic_riff.mp3", 80_000)
@@ -218,9 +233,10 @@ class ExampleRobolectricTest {
         assertEquals("epic_riff", track.title)
         assertFalse(track.isBuiltIn)
         assertNotNull(track.uriString)
-        val privateFile = File(track.uriString!!)
-        assertTrue("Private file should exist in app storage", privateFile.exists())
-        assertTrue("Private file should reside in filesDir/imported_audio", privateFile.absolutePath.contains("imported_audio"))
+        assertTrue("Stored audio URI must resolve to an existing file", trackUriExists(context, track.uriString!!))
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            assertTrue("Android 10+ imports must use a shared MediaStore URI", track.uriString!!.startsWith("content://"))
+        }
 
         repo.deleteTrack(track)
         Unit
@@ -272,7 +288,7 @@ class ExampleRobolectricTest {
 
         assertEquals("Identical audio must reuse the existing track ID", track1.id, track2.id)
         assertEquals("Identical audio must reuse the existing stored file", track1.uriString, track2.uriString)
-        assertTrue(File(track1.uriString!!).exists())
+        assertTrue(trackUriExists(context, track1.uriString!!))
         assertEquals(
             "The library must contain only one imported entry for identical bytes",
             1,
@@ -301,7 +317,7 @@ class ExampleRobolectricTest {
         assertEquals(148.0, found!!.effectiveBpm, 0.01)
         assertEquals(-35L, found.syncOffsetMs)
         assertEquals(BpmConfidence.MANUAL, found.bpmConfidence)
-        assertTrue(File(found.uriString!!).exists())
+        assertTrue(trackUriExists(context, found.uriString!!))
 
         repoInstance2.deleteTrack(imported)
         Unit
@@ -314,12 +330,12 @@ class ExampleRobolectricTest {
         val originalFile = createValidMp3File(context, "temporary_jam.mp3", 70_000)
 
         val imported = repo.importAudio(Uri.fromFile(originalFile)).getOrThrow()
-        val privateCopy = File(imported.uriString!!)
-        assertTrue("Private copy must exist after import", privateCopy.exists())
+        val storedUri = imported.uriString!!
+        assertTrue("Stored copy must exist after import", trackUriExists(context, storedUri))
 
         val deleteResult = repo.deleteTrack(imported)
         assertTrue("Deletion must succeed", deleteResult.isSuccess)
-        assertFalse("Private copy must be deleted", privateCopy.exists())
+        assertFalse("Stored copy must be deleted", trackUriExists(context, storedUri))
         assertTrue("Original user file must be preserved untouched", originalFile.exists())
 
         val remainingTracks = repo.loadAllTracks()
@@ -438,7 +454,7 @@ class ExampleRobolectricTest {
 
         val temp = createValidMp3File(context, "ghost_track.mp3", 75_000)
         val imported = repo.importAudio(Uri.fromFile(temp)).getOrThrow()
-        File(imported.uriString!!).delete()
+        deleteTrackUri(context, imported.uriString!!)
 
         val reloaded = repo.loadAllTracks()
         assertNull("Missing physical file must be automatically removed from manifest", reloaded.find { it.id == imported.id })
