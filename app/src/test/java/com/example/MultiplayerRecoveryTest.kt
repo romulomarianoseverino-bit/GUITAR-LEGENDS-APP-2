@@ -140,11 +140,12 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.waitForIdle()
         assertTrue(vm.currentScreen.value is GameScreen.CompetitiveMultiplayer)
 
+        // As abas ficam no topo do painel; valide-as antes de rolar até os controles inferiores.
+        composeTestRule.onNodeWithTag("multiplayer_tab_battle").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_tab_band").assertIsDisplayed()
         composeTestRule.onNodeWithTag("multiplayer_google_signin_button")
             .performScrollTo()
             .assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_tab_battle").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_tab_band").assertIsDisplayed()
         composeTestRule.onNodeWithTag("multiplayer_start_button")
             .performScrollTo()
             .assertIsDisplayed()
