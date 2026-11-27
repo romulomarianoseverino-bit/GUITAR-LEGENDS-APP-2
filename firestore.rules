@@ -537,9 +537,10 @@ service cloud.firestore {
     match /user_presence/{userId} {
       allow get, list: if isSignedIn();
       allow create, update: if isOwner(userId) &&
-        incoming().keys().hasOnly(['userId', 'online', 'lastSeenAtMs']) &&
+        incoming().keys().hasOnly(['userId', 'online', 'allowRoomInvites', 'lastSeenAtMs']) &&
         incoming().userId == userId &&
         incoming().online is bool &&
+        incoming().allowRoomInvites is bool &&
         incoming().lastSeenAtMs is int;
       allow delete: if isOwner(userId);
     }
