@@ -231,6 +231,17 @@ service cloud.firestore {
                          isValidProgressionEntry(incoming(), userId);
         allow update, delete: if false;
       }
+
+      // Lista de bloqueios privada, controlada exclusivamente pelo titular.
+      match /blocked/{blockedUid} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+          blockedUid != userId &&
+          incoming().keys().hasOnly(['userId', 'createdAtMs']) &&
+          incoming().userId == blockedUid &&
+          incoming().createdAtMs is int;
+        allow delete: if isOwner(userId);
+      }
     }
 
     // 2. Reserva de nicknames exclusivos (sem exposição de PII nem listagem aberta)
@@ -466,6 +477,101 @@ service cloud.firestore {
 
         allow delete: if false;
       }
+    }
+
+    function friendPairId(a, b) {
+      return a < b ? a + '__' + b : b + '__' + a;
+    }
+
+    function areFriends(a, b) {
+      return exists(/databases/$(database)/documents/friend_requests/$(friendPairId(a, b))) &&
+        get(/databases/$(database)/documents/friend_requests/$(friendPairId(a, b))).data.status == 'ACCEPTED';
+    }
+
+    match /friend_requests/{requestId} {
+      allow get, list: if isSignedIn() &&
+        (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        incoming().keys().hasAll([
+          'senderUid', 'recipientUid', 'senderNickname', 'recipientNickname',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().keys().hasOnly([
+          'senderUid', 'recipientUid', 'senderNickname', 'recipientNickname',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().senderUid == request.auth.uid &&
+        incoming().recipientUid is string &&
+        incoming().recipientUid != request.auth.uid &&
+        incoming().senderNickname is string && incoming().senderNickname.size() <= 24 &&
+        incoming().recipientNickname is string && incoming().recipientNickname.size() <= 24 &&
+        incoming().status == 'PENDING' &&
+        incoming().createdAtMs is int && incoming().updatedAtMs is int;
+      allow update: if isSignedIn() &&
+        incoming().senderUid == existing().senderUid &&
+        incoming().recipientUid == existing().recipientUid &&
+        incoming().senderNickname == existing().senderNickname &&
+        incoming().recipientNickname == existing().recipientNickname &&
+        incoming().createdAtMs is int &&
+        incoming().updatedAtMs is int &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'createdAtMs', 'updatedAtMs']) &&
+        (
+          (existing().recipientUid == request.auth.uid &&
+            existing().status == 'PENDING' &&
+            incoming().status in ['ACCEPTED', 'DECLINED']) ||
+          (existing().senderUid == request.auth.uid &&
+            existing().status == 'DECLINED' &&
+            incoming().status == 'PENDING')
+        );
+      allow delete: if isSignedIn() &&
+        (existing().senderUid == request.auth.uid || existing().recipientUid == request.auth.uid);
+    }
+
+    match /user_presence/{userId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isOwner(userId) &&
+        incoming().keys().hasOnly(['userId', 'online', 'lastSeenAtMs']) &&
+        incoming().userId == userId &&
+        incoming().online is bool &&
+        incoming().lastSeenAtMs is int;
+      allow delete: if isOwner(userId);
+    }
+
+    match /room_invites/{inviteId} {
+      allow get, list: if isSignedIn() &&
+        (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        incoming().keys().hasAll([
+          'senderUid', 'recipientUid', 'senderNickname', 'roomCode',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().keys().hasOnly([
+          'senderUid', 'recipientUid', 'senderNickname', 'roomCode',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().senderUid == request.auth.uid &&
+        incoming().recipientUid is string &&
+        incoming().recipientUid != request.auth.uid &&
+        incoming().senderNickname is string && incoming().senderNickname.size() <= 24 &&
+        incoming().roomCode is string && incoming().roomCode.size() >= 4 && incoming().roomCode.size() <= 24 &&
+        incoming().status == 'PENDING' &&
+        incoming().createdAtMs is int && incoming().updatedAtMs is int &&
+        exists(/databases/$(database)/documents/multiplayer_rooms/$(incoming().roomCode)) &&
+        request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(incoming().roomCode)).data.memberUids &&
+        areFriends(request.auth.uid, incoming().recipientUid);
+      allow update: if isSignedIn() &&
+        existing().recipientUid == request.auth.uid &&
+        existing().status == 'PENDING' &&
+        incoming().senderUid == existing().senderUid &&
+        incoming().recipientUid == existing().recipientUid &&
+        incoming().roomCode == existing().roomCode &&
+        incoming().senderNickname == existing().senderNickname &&
+        incoming().createdAtMs == existing().createdAtMs &&
+        incoming().status in ['ACCEPTED', 'DECLINED'] &&
+        incoming().updatedAtMs is int &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAtMs']);
+      allow delete: if isSignedIn() &&
+        (existing().senderUid == request.auth.uid || existing().recipientUid == request.auth.uid);
     }
   }
 }
