@@ -386,13 +386,14 @@ class MusicLibraryRepository(private val context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return source.absolutePath
 
         val extension = getExtensionFromName(displayName).lowercase()
-        val resolvedMime = mimeType.takeIf { it.startsWith("audio/") } ?: when (extension) {
-            "mp3" -> "audio/mpeg"
-            "wav" -> "audio/wav"
-            "ogg" -> "audio/ogg"
-            "m4a" -> "audio/mp4"
-            "aac" -> "audio/aac"
-            "flac" -> "audio/flac"
+        val resolvedMime = when {
+            extension == "wav" -> "audio/x-wav"
+            mimeType.startsWith("audio/") -> mimeType
+            extension == "mp3" -> "audio/mpeg"
+            extension == "ogg" -> "audio/ogg"
+            extension == "m4a" -> "audio/mp4"
+            extension == "aac" -> "audio/aac"
+            extension == "flac" -> "audio/flac"
             else -> "application/octet-stream"
         }
         val values = ContentValues().apply {
