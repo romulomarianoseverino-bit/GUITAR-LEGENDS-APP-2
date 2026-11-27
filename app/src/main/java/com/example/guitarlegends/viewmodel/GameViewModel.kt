@@ -2518,6 +2518,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
         val exactLocalTrack = _tracks.value.firstOrNull { it.id == room.trackId }
         if (exactLocalTrack != null) {
+            lastPreparedAudioTransferId = room.audioTransferId
             selectTrack(exactLocalTrack)
             _isRoomAudioReady.value = true
             _pendingRoomAudioChoice.value = null
@@ -3036,6 +3037,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
     fun toggleMultiplayerReady() {
         val room = _multiplayerRoom.value ?: return
+        if (!_isRoomAudioReady.value) {
+            _multiplayerError.value = "Escolha como deseja usar a música recebida do anfitrião antes de marcar PRONTO."
+            return
+        }
         val repo = multiplayerRepo ?: return
         val uid = repo.currentUidOrNull() ?: return
         val self = _multiplayerParticipants.value.find { it.userId == uid }
@@ -3066,6 +3071,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         val uid = repo.currentUidOrNull() ?: return
         if (room.hostUid != uid) {
             _multiplayerError.value = "Aguarde o anfitrião (${room.hostNickname}) iniciar a partida sincronizada."
+            return
+        }
+        if (!selectedTrack.isBuiltIn && (room.audioTransferId.isBlank() || room.trackFingerprint.length != 64)) {
+            _multiplayerError.value = "A música importada ainda não foi transferida e validada para todos os participantes."
             return
         }
         val participants = _multiplayerParticipants.value
