@@ -185,7 +185,8 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         val roomCode = "ROCK-$tag"
         val aliceUid = awaitWithMainLooper { signInTestUser("mp_alice_$tag@test.com") }
 
-        val vm = GameViewModel(app)
+        // Injeta no ViewModel o mesmo FirebaseApp autenticado e apontado ao emulador.
+        val vm = GameViewModel(app, firebaseApp)
         vm.updateGuestNickname("AliceLead")
         vm.enterGame()
 
