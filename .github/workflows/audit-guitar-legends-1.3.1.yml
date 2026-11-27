@@ -45,6 +45,31 @@ jobs:
           firebase emulators:exec --project demo-no-project --only auth,firestore \
             'gradle --no-daemon testDebugUnitTest --stacktrace'
 
+      - name: Compilar APK de depuração após os testes
+        if: success()
+        run: gradle --no-daemon assembleDebug
+
+      - name: Instalar e abrir no emulador Android 16
+        if: success()
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim
+          script: |
+            set -euo pipefail
+            adb install app/build/outputs/apk/debug/app-debug.apk
+            adb shell monkey -p com.aistudio.applet.kpfcic 1
+            sleep 20
+            adb shell pidof com.aistudio.applet.kpfcic
+            if adb logcat -d -s AndroidRuntime:E | grep -q "FATAL EXCEPTION"; then
+              adb logcat -d -s AndroidRuntime:E
+              exit 1
+            fi
+
       - name: Publicar relatórios de testes
         if: always()
         uses: actions/upload-artifact@v4
