@@ -2613,18 +2613,47 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun updateMultiplayerTrack(track: Track) {
+        val previousTrack = selectedTrack
         selectTrack(track)
         val room = _multiplayerRoom.value ?: return
         val uid = multiplayerRepo?.currentUidOrNull() ?: return
         if (room.hostUid == uid) {
             viewModelScope.launch {
+                _isMultiplayerBusy.value = true
+                _multiplayerError.value = null
+                var transferId = ""
+                var fingerprint = ""
+                if (!track.isBuiltIn) {
+                    val transferResult = audioTransferRepo?.uploadTrack(room.roomCode, track)
+                    if (transferResult == null || transferResult.isFailure) {
+                        selectTrack(previousTrack)
+                        _multiplayerError.value = transferResult?.exceptionOrNull()?.message
+                            ?: "Não foi possível preparar o áudio para os participantes."
+                        _isMultiplayerBusy.value = false
+                        return@launch
+                    }
+                    val transfer = transferResult.getOrThrow()
+                    transferId = transfer.id
+                    fingerprint = transfer.sha256
+                }
                 multiplayerRepo.updateRoomHostConfig(
                     roomCode = room.roomCode,
                     mode = _multiplayerMode.value,
-                    track = track
-                ).onFailure { err ->
+                    track = track,
+                    audioTransferId = transferId,
+                    trackFingerprint = fingerprint
+                ).onSuccess {
+                    _multiplayerRoom.value = room.copy(
+                        trackId = track.id,
+                        trackTitle = track.title,
+                        audioTransferId = transferId,
+                        trackFingerprint = fingerprint
+                    )
+                }.onFailure { err ->
+                    selectTrack(previousTrack)
                     _multiplayerError.value = err.message ?: "Falha ao sincronizar música da sala."
                 }
+                _isMultiplayerBusy.value = false
             }
         }
     }
