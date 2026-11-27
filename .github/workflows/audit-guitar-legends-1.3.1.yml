@@ -45,25 +45,68 @@ jobs:
           firebase emulators:exec --project demo-no-project --only auth,firestore \
             'gradle --no-daemon testDebugUnitTest --stacktrace'
 
-      - name: Criar chave temporária de depuração
+      # Usa exatamente a chave permanente já utilizada pelo fluxo oficial do projeto.
+      # Se os segredos estiverem ausentes ou inválidos, não gera APK com outra assinatura.
+      - name: Preparar chave permanente de assinatura
+        id: prepare_signing
         if: success()
+        env:
+          GH_SIGNING_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          GH_SIGNING_STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          GH_SIGNING_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
         run: |
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          set -euo pipefail
+          test -n "$GH_SIGNING_KEYSTORE_B64" || { echo "::error::O segredo DEBUG_KEYSTORE_BASE64 está vazio ou indisponível."; exit 1; }
+          test -n "$GH_SIGNING_STORE_PASSWORD" || { echo "::error::O segredo DEBUG_KEYSTORE_PASSWORD está vazio ou indisponível."; exit 1; }
+          test -n "$GH_SIGNING_KEY_PASSWORD" || { echo "::error::O segredo DEBUG_KEY_PASSWORD está vazio ou indisponível."; exit 1; }
 
-      - name: Compilar APK de depuração após os testes
-        if: success()
-        run: gradle --no-daemon assembleDebug
+          KEYSTORE_PATH="$RUNNER_TEMP/guitar-legends-permanent.jks"
+          printf '%s' "$GH_SIGNING_KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          KEYTOOL_LOG="$RUNNER_TEMP/keytool-check.log"
+          keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$GH_SIGNING_STORE_PASSWORD" > "$KEYTOOL_LOG"
+
+          mapfile -t PRIVATE_KEY_ALIASES < <(awk '
+            /^Alias name: / { alias = substr($0, index($0, ": ") + 2) }
+            /^Entry type: / {
+              entry_type = substr($0, index($0, ": ") + 2)
+              if (entry_type == "PrivateKeyEntry" && alias != "") print alias
+              alias = ""
+            }
+          ' "$KEYTOOL_LOG")
+          if [ "${#PRIVATE_KEY_ALIASES[@]}" -ne 1 ]; then
+            echo "::error::A chave permanente precisa conter exatamente uma entrada de chave privada."
+            exit 1
+          fi
+
+          echo "KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=${PRIVATE_KEY_ALIASES[0]}" >> "$GITHUB_ENV"
+          echo "STORE_PASSWORD=$GH_SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$GH_SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "Chave permanente reconhecida. Nenhuma chave temporária será criada."
+
+      - name: Compilar APK de validação com a chave permanente
+        id: build_release
+        if: success() && steps.prepare_signing.outcome == 'success'
+        run: gradle --no-daemon clean assembleRelease
+
+      - name: Validar assinatura, alinhamento e identificação do APK
+        if: success() && steps.build_release.outcome == 'success'
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
+          BADGING="$("$BUILD_TOOLS/aapt" dump badging "$APK" | head -n 1)"
+          echo "$BADGING"
+          echo "$BADGING" | grep -q "package: name='com.aistudio.applet.kpfcic'"
+          echo "$BADGING" | grep -q "versionName='1.3.1'"
+          sha256sum "$APK"
 
       - name: Instalar e abrir no emulador Android 16
-        if: success()
+        if: success() && steps.build_release.outcome == 'success'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -74,7 +117,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim
           script: |
             set -euo pipefail
-            adb install app/build/outputs/apk/debug/app-debug.apk
+            adb install app/build/outputs/apk/release/app-release.apk
             adb shell monkey -p com.aistudio.applet.kpfcic 1
             sleep 20
             adb shell pidof com.aistudio.applet.kpfcic
