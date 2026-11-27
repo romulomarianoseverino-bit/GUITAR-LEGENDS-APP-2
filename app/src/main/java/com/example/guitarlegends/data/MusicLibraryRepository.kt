@@ -15,7 +15,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Repositório central de gerenciamento e persistência da Biblioteca Musical.
@@ -25,6 +28,9 @@ import java.util.UUID
  * - Grava o manifesto com substituição atômica por arquivo temporário e propagação real de falhas.
  */
 class MusicLibraryRepository(private val context: Context) {
+
+    // Serializa importações para impedir que dois arquivos iguais sejam gravados simultaneamente.
+    private val importMutex = Mutex()
 
     private val storageDir: File by lazy {
         File(context.filesDir, "imported_audio").apply {
@@ -45,25 +51,34 @@ class MusicLibraryRepository(private val context: Context) {
     suspend fun loadAllTracks(): List<Track> = withContext(Dispatchers.IO) {
         val importedTracks = loadImportedTracksFromManifest()
         val verifiedImported = mutableListOf<Track>()
+        val seenContentHashes = mutableSetOf<String>()
 
         for (track in importedTracks) {
             val uriStr = track.uriString
             if (!uriStr.isNullOrBlank()) {
                 val file = File(uriStr)
                 if (file.exists() && file.length() > 0L) {
-                    verifiedImported.add(track)
+                    val fingerprinted = if (track.contentHash.isBlank()) {
+                        track.copy(contentHash = sha256(file))
+                    } else track
+                    val fingerprint = fingerprinted.contentHash.lowercase()
+                    // Corrige também duplicatas que já estavam gravadas no manifesto.
+                    if (fingerprint.isBlank() || seenContentHashes.add(fingerprint)) {
+                        verifiedImported.add(fingerprinted)
+                    }
                 }
             }
         }
 
-        if (verifiedImported.size != importedTracks.size) {
+        if (verifiedImported != importedTracks) {
             saveManifest(verifiedImported)
         }
 
         AudioAnalyzer.BUILT_IN_TRACKS + verifiedImported
     }
 
-    suspend fun importAudio(uri: Uri): Result<Track> = withContext(Dispatchers.IO) {
+    suspend fun importAudio(uri: Uri): Result<Track> = importMutex.withLock {
+        withContext(Dispatchers.IO) {
         var copiedFile: File? = null
         try {
             val originalName = getDisplayName(uri) ?: return@withContext Result.failure(
@@ -138,6 +153,33 @@ class MusicLibraryRepository(private val context: Context) {
                 )
             }
 
+            val contentHash = sha256(targetFile)
+            val manifestTracks = loadImportedTracksFromManifest()
+            val existingTracks = manifestTracks.mapNotNull { existing ->
+                val existingFile = existing.uriString?.let(::File)
+                if (existingFile == null || !existingFile.exists() || existingFile.length() <= 0L) {
+                    null
+                } else if (existing.contentHash.isBlank()) {
+                    existing.copy(contentHash = sha256(existingFile))
+                } else existing
+            }
+            if (existingTracks != manifestTracks) {
+                val migration = saveManifest(existingTracks)
+                if (migration.isFailure) {
+                    targetFile.delete()
+                    return@withContext Result.failure(
+                        migration.exceptionOrNull() ?: Exception("Falha ao atualizar fingerprints da biblioteca.")
+                    )
+                }
+            }
+            val duplicate = existingTracks.firstOrNull {
+                it.contentHash.isNotBlank() && it.contentHash.equals(contentHash, ignoreCase = true)
+            }
+            if (duplicate != null) {
+                targetFile.delete()
+                return@withContext Result.success(duplicate)
+            }
+
             val meta = extractTags(targetFile)
             val finalTitle = meta.first?.takeIf { it.isNotBlank() }?.trim() ?: rawBaseTitle
             val finalArtist = meta.second?.takeIf { it.isNotBlank() }?.trim() ?: "Artista Local"
@@ -163,10 +205,11 @@ class MusicLibraryRepository(private val context: Context) {
                 onsetTimesMs = analysis.onsetTimesMs,
                 isShortAudio = isShort,
                 audioClassification = classification,
-                mimeType = mimeType
+                mimeType = mimeType,
+                contentHash = contentHash
             )
 
-            val currentTracks = loadImportedTracksFromManifest().toMutableList()
+            val currentTracks = existingTracks.toMutableList()
             currentTracks.add(0, track)
             val saveResult = saveManifest(currentTracks)
             if (saveResult.isFailure) {
@@ -180,6 +223,7 @@ class MusicLibraryRepository(private val context: Context) {
         } catch (e: Exception) {
             copiedFile?.delete()
             Result.failure(Exception("Falha ao importar áudio: ${e.message}"))
+        }
         }
     }
 
@@ -244,11 +288,43 @@ class MusicLibraryRepository(private val context: Context) {
     }
 
     suspend fun loadPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
-        loadPlaylistsInternal()
+        val tracks = loadAllTracks()
+        val stored = loadPlaylistsInternal()
+        val normalized = normalizePlaylistTracks(stored, tracks)
+        if (normalized != stored) savePlaylistsInternal(normalized)
+        normalized
     }
 
     suspend fun savePlaylists(playlists: List<Playlist>): Result<Unit> = withContext(Dispatchers.IO) {
-        savePlaylistsInternal(playlists)
+        val tracks = loadAllTracks()
+        savePlaylistsInternal(normalizePlaylistTracks(playlists, tracks))
+    }
+
+    /**
+     * Remove referências duplicadas por ID e por conteúdo de áudio.
+     * Mantém a primeira ocorrência e não compara títulos, evitando juntar músicas distintas.
+     */
+    private fun normalizePlaylistTracks(
+        playlists: List<Playlist>,
+        tracks: List<Track>
+    ): List<Playlist> {
+        val tracksById = tracks.associateBy { it.id }
+        return playlists.map { playlist ->
+            val seenIds = mutableSetOf<String>()
+            val seenHashes = mutableSetOf<String>()
+            val normalizedIds = playlist.trackIds.filter { trackId ->
+                if (!seenIds.add(trackId)) {
+                    false
+                } else {
+                    val hash = tracksById[trackId]?.contentHash
+                        ?.takeIf { it.isNotBlank() }
+                        ?.lowercase()
+                    hash == null || seenHashes.add(hash)
+                }
+            }
+            if (normalizedIds == playlist.trackIds) playlist
+            else playlist.copy(trackIds = normalizedIds, updatedAtMs = System.currentTimeMillis())
+        }
     }
 
     private fun loadPlaylistsInternal(): List<Playlist> {
@@ -377,7 +453,8 @@ class MusicLibraryRepository(private val context: Context) {
                         AudioClassification.valueOf(obj.optString("audioClassification", AudioClassification.MUSIC_FULL.name))
                     }.getOrDefault(AudioClassification.MUSIC_FULL),
                     mimeType = obj.optString("mimeType", ""),
-                    syncOffsetMs = obj.optLong("syncOffsetMs", 0L)
+                    syncOffsetMs = obj.optLong("syncOffsetMs", 0L),
+                    contentHash = obj.optString("contentHash", "")
                 )
                 list.add(track)
             }
@@ -411,6 +488,7 @@ class MusicLibraryRepository(private val context: Context) {
                     put("audioClassification", t.audioClassification.name)
                     put("mimeType", t.mimeType)
                     put("syncOffsetMs", t.syncOffsetMs)
+                    put("contentHash", t.contentHash)
                 }
                 array.put(obj)
             }
@@ -428,6 +506,21 @@ class MusicLibraryRepository(private val context: Context) {
         } catch (e: Exception) {
             runCatching { tempFile.delete() }
             Result.failure(Exception("Falha ao persistir biblioteca musical: ${e.message}"))
+        }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(8 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
         }
     }
 

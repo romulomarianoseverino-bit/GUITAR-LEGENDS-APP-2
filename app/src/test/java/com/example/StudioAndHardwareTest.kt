@@ -240,7 +240,8 @@ class StudioAndHardwareTest {
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("amp_score_cabinet").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("analog_rock_meter").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("performance_approval_gauge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analog_rock_meter").assertDoesNotExist()
         composeTestRule.onNodeWithTag("vocal_pitch_bar").assertIsDisplayed()
 
         // Os botões de toque existem sem rótulos de texto "PISTA 1..5"

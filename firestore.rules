@@ -286,6 +286,7 @@ service cloud.firestore {
              data.combo is int && data.combo >= 0 && data.combo <= 100000 &&
              data.rockMeter is number && data.rockMeter >= 0 && data.rockMeter <= 1 &&
              data.starPowerActive is bool &&
+             (!('strikeConsent' in data) || data.strikeConsent == null || data.strikeConsent is bool) &&
              data.lastHeartbeatMs is int && data.lastHeartbeatMs >= 0 &&
              data.joinedAt is timestamp && data.joinedAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -293,6 +294,18 @@ service cloud.firestore {
 
     // 4. Salas Multiplayer (acesso autenticado por código exato ou participação ativa)
     match /multiplayer_rooms/{roomCode} {
+      function participantConsented(uid) {
+        return get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(uid)).data.strikeConsent == true;
+      }
+
+      function allMembersConsented() {
+        return existing().memberUids.size() >= 1 &&
+               participantConsented(existing().memberUids[0]) &&
+               (existing().memberUids.size() < 2 || participantConsented(existing().memberUids[1])) &&
+               (existing().memberUids.size() < 3 || participantConsented(existing().memberUids[2])) &&
+               (existing().memberUids.size() < 4 || participantConsented(existing().memberUids[3]));
+      }
+
       allow get: if isSignedIn() && isValidRoomCode(roomCode);
       allow list: if isSignedIn() && (request.auth.uid in resource.data.memberUids);
 
@@ -310,7 +323,8 @@ service cloud.firestore {
                          'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
                          'winnerUid', 'inviteMessage', 'strikeEnabled', 'createdAt', 'updatedAt'
                        ]) &&
-                       isValidMultiplayerRoom(incoming(), roomCode);
+                       isValidMultiplayerRoom(incoming(), roomCode) &&
+                       (!('strikeEnabled' in incoming()) || incoming().strikeEnabled == false);
 
       allow update: if isSignedIn() &&
                        isValidRoomCode(roomCode) &&
@@ -328,7 +342,11 @@ service cloud.firestore {
                            ]) &&
                            (
                              !('strikeEnabled' in incoming().diff(existing()).affectedKeys()) ||
-                             (existing().status == 'WAITING' && incoming().status == 'WAITING')
+                             (
+                               existing().status == 'WAITING' &&
+                               incoming().status in ['WAITING', 'PLAYING'] &&
+                               (incoming().strikeEnabled == false || allMembersConsented())
+                             )
                            )
                          ) ||
                          // Ação 2: Convidado entra na sala em espera respeitando limite
@@ -384,12 +402,12 @@ service cloud.firestore {
                          incoming().keys().hasAll([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          incoming().keys().hasOnly([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          isValidMultiplayerParticipant(incoming(), roomCode, participantUid);
 
@@ -404,8 +422,12 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'nickname', 'instrument', 'difficulty', 'ready',
                            'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'updatedAt'
-                         ]);
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'updatedAt'
+                         ]) &&
+                         (
+                           !incoming().diff(existing()).affectedKeys().hasAny(['strikeConsent']) ||
+                           get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'WAITING'
+                         );
 
         allow delete: if isSignedIn() &&
                          isValidRoomCode(roomCode) &&

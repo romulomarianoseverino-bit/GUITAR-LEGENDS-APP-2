@@ -14,13 +14,13 @@ object FirebaseClientProvider {
         }.getOrNull()
     }
 
-    fun getAuthOrNull(context: Context): FirebaseAuth? {
-        val app = ensureInitialized(context) ?: return null
+    fun getAuthOrNull(context: Context, firebaseApp: FirebaseApp? = null): FirebaseAuth? {
+        val app = firebaseApp ?: ensureInitialized(context) ?: return null
         return runCatching { FirebaseAuth.getInstance(app) }.getOrNull()
     }
 
-    fun getFirestoreOrNull(context: Context): FirebaseFirestore? {
-        val app = ensureInitialized(context) ?: return null
+    fun getFirestoreOrNull(context: Context, firebaseApp: FirebaseApp? = null): FirebaseFirestore? {
+        val app = firebaseApp ?: ensureInitialized(context) ?: return null
         return runCatching {
             val dbId = context.getString(R.string.firestore_database_id)
             FirebaseFirestore.getInstance(app, dbId)

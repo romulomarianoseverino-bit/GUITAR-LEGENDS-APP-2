@@ -39,6 +39,15 @@ class MultiplayerCloudRepository(
         return if (clean.length >= 2) clean else "Rocker_${uid.take(4)}"
     }
 
+    private fun roomTrackId(track: Track): String {
+        val fingerprint = track.contentHash.trim().lowercase()
+        return if (!track.isBuiltIn && fingerprint.matches(Regex("^[a-f0-9]{64}$"))) {
+            "sha256_$fingerprint"
+        } else {
+            track.id.ifBlank { "track_thunderstrike" }.take(128)
+        }
+    }
+
     suspend fun createRoom(
         mode: MultiplayerMode,
         track: Track,
@@ -46,7 +55,7 @@ class MultiplayerCloudRepository(
         instrument: Instrument,
         difficulty: Difficulty,
         customRoomCode: String? = null,
-        strikeEnabled: Boolean = true
+        strikeEnabled: Boolean = false
     ): Result<MultiplayerRoomCloud> {
         val user = auth.currentUser
             ?: return Result.failure(IllegalStateException("Entre com sua conta Google antes de criar uma sala online."))
@@ -70,7 +79,7 @@ class MultiplayerCloudRepository(
                     hostNickname = hostNick,
                     mode = mode.name,
                     status = RoomStatus.WAITING.name,
-                    trackId = track.id.ifBlank { "track_thunderstrike" }.take(128),
+                    trackId = roomTrackId(track),
                     trackTitle = track.title.ifBlank { "Música de Palco" }.take(160),
                     maxPlayers = mode.maxPlayers,
                     memberUids = listOf(uid),
@@ -168,8 +177,6 @@ class MultiplayerCloudRepository(
                 participantRef.update(
                     mapOf(
                         "nickname" to nick,
-                        "instrument" to instrument.name,
-                        "difficulty" to difficulty.name,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
                         "updatedAt" to FieldValue.serverTimestamp()
@@ -198,6 +205,29 @@ class MultiplayerCloudRepository(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Result.failure(runCatching { handleFirestoreError(e, OperationType.WRITE, roomPath, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    suspend fun getCurrentParticipant(roomCode: String): Result<MultiplayerParticipantCloud> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized/participants/$uid"
+        return try {
+            val snapshot = firestore.collection("multiplayer_rooms")
+                .document(normalized)
+                .collection("participants")
+                .document(uid)
+                .get()
+                .await()
+            val participant = snapshot.toObject(
+                MultiplayerParticipantCloud::class.java,
+                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+            ) ?: throw IllegalStateException("Os dados individuais do jogador não foram encontrados na sala.")
+            Result.success(participant)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.GET, path, auth) }.exceptionOrNull() ?: e)
         }
     }
 
@@ -276,6 +306,33 @@ class MultiplayerCloudRepository(
                         "ready" to ready,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    suspend fun updateParticipantStrikeConsent(
+        roomCode: String,
+        consent: Boolean
+    ): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized/participants/$uid"
+        return try {
+            firestore.collection("multiplayer_rooms")
+                .document(normalized)
+                .collection("participants")
+                .document(uid)
+                .update(
+                    mapOf(
+                        "strikeConsent" to consent,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -367,7 +424,7 @@ class MultiplayerCloudRepository(
             val updates = mutableMapOf<String, Any>(
                 "mode" to mode.name,
                 "maxPlayers" to mode.maxPlayers,
-                "trackId" to track.id.ifBlank { "track_thunderstrike" }.take(128),
+                "trackId" to roomTrackId(track),
                 "trackTitle" to track.title.ifBlank { "Música de Palco" }.take(160),
                 "updatedAt" to FieldValue.serverTimestamp()
             )

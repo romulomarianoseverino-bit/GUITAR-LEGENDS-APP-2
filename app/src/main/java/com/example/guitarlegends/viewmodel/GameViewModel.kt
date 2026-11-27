@@ -20,6 +20,7 @@ import com.example.guitarlegends.engine.ParticleSystem
 import com.example.guitarlegends.input.ConnectedControllerInfo
 import com.example.guitarlegends.input.GamepadInputManager
 import com.example.guitarlegends.model.*
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.Job
@@ -61,7 +62,7 @@ sealed class AuthUiState {
     data class Authenticated(val uid: String, val email: String, val nickname: String) : AuthUiState()
 }
 
-class GameViewModel(application: Application) : AndroidViewModel(application) {
+class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) : AndroidViewModel(application) {
 
     private val context: Context = application.applicationContext
     val audioPlayer = AudioPlayerEngine(context)
@@ -85,14 +86,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private var authJob: Job? = null
 
-    private val firebaseAuth: FirebaseAuth? = FirebaseClientProvider.getAuthOrNull(context)
+    private val firebaseAuth: FirebaseAuth? = FirebaseClientProvider.getAuthOrNull(context, firebaseApp)
     private val accountRepo: AccountCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) AccountCloudRepository(db, auth) else null
     }
     private val multiplayerRepo: MultiplayerCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) MultiplayerCloudRepository(db, auth) else null
     }
@@ -177,6 +178,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedTrackFlow = MutableStateFlow(AudioAnalyzer.BUILT_IN_TRACKS[0])
     val selectedTrackFlow: StateFlow<Track> = _selectedTrackFlow.asStateFlow()
+    private val _selectedInstrumentFlow = MutableStateFlow(Instrument.GUITAR)
+    val selectedInstrumentFlow: StateFlow<Instrument> = _selectedInstrumentFlow.asStateFlow()
+    private val _selectedDifficultyFlow = MutableStateFlow(Difficulty.MEDIUM)
+    val selectedDifficultyFlow: StateFlow<Difficulty> = _selectedDifficultyFlow.asStateFlow()
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
@@ -1578,8 +1583,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addTrackToPlaylist(playlistId: String, trackId: String) {
+        val targetTrack = _tracks.value.firstOrNull { it.id == trackId }
+        val targetHash = targetTrack?.contentHash?.takeIf { it.isNotBlank() }
         val updated = _playlists.value.map { pl ->
-            if (pl.id == playlistId && !pl.trackIds.contains(trackId)) {
+            val sameAudioAlreadyPresent = targetHash != null && pl.trackIds.any { existingId ->
+                _tracks.value.firstOrNull { it.id == existingId }
+                    ?.contentHash?.equals(targetHash, ignoreCase = true) == true
+            }
+            if (pl.id == playlistId && !pl.trackIds.contains(trackId) && !sameAudioAlreadyPresent) {
                 pl.copy(trackIds = pl.trackIds + trackId, updatedAtMs = System.currentTimeMillis())
             } else pl
         }
@@ -1660,10 +1671,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectInstrument(instrument: Instrument) {
         selectedInstrument = instrument
+        _selectedInstrumentFlow.value = instrument
     }
 
     fun selectDifficulty(difficulty: Difficulty) {
         selectedDifficulty = difficulty
+        _selectedDifficultyFlow.value = difficulty
     }
 
     fun setCompetitiveMode(competitive: Boolean) {
@@ -1861,6 +1874,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startMatch() {
+        val activeRoom = _multiplayerRoom.value
+        if (activeRoom?.statusEnum == RoomStatus.PLAYING &&
+            !applyMultiplayerRoomTrack(activeRoom)
+        ) {
+            return
+        }
         stopPreview()
         _playbackErrorMessage.value = null
         _score.value = 0
@@ -1877,11 +1896,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         totalHitCount = 0
         totalMissCount = 0
 
-        val strikeAllowed = isStrikeEnabledForCurrentMatch()
         adaptiveEngine = AdaptiveEngine(selectedDifficulty, _playerStats.value.glassAdaptiveEnabled)
-        val rawNotes = AudioAnalyzer.generateChart(selectedTrack, selectedInstrument, selectedDifficulty)
-        val generatedNotes = if (strikeAllowed) rawNotes else rawNotes.map { it.copy(isStarPower = false) }
-        _activeNotes.value = generatedNotes
+        _activeNotes.value = AudioAnalyzer.generateChart(selectedTrack, selectedInstrument, selectedDifficulty)
 
         audioPlayer.loadTrack(
             track = selectedTrack,
@@ -1922,10 +1938,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
-                    if (!isStrikeEnabledForCurrentMatch()) {
-                        _isStarPowerActive.value = false
-                        _starPowerEnergy.value = 0f
-                    } else if (_isStarPowerActive.value) {
+                    if (_isStarPowerActive.value) {
                         _starPowerEnergy.value = (_starPowerEnergy.value - 0.003f).coerceAtLeast(0f)
                         if (_starPowerEnergy.value <= 0f) {
                             _isStarPowerActive.value = false
@@ -1975,7 +1988,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     internal fun processSustainingNotes(currentPosMs: Long) {
         val heldLanes = _activeFretLanes.value
-        val strikeAllowed = isStrikeEnabledForCurrentMatch()
         for (note in _activeNotes.value) {
             if (note.isHit && note.durationMs > 50L && note.isSustaining && !note.sustainBroken && !note.sustainCompleted) {
                 val endMs = note.timeMs + note.durationMs
@@ -1991,7 +2003,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     note.lastSustainTickMs = currentPosMs
                     val tickPts = (12 * selectedDifficulty.scoreMultiplier * _multiplier.value).toInt().coerceAtLeast(1)
                     _score.value = _score.value + tickPts
-                    if (note.isStarPower && strikeAllowed) {
+                    if (note.isStarPower) {
                         _starPowerEnergy.value = (_starPowerEnergy.value + 0.012f).coerceAtMost(1.0f)
                     }
                 }
@@ -2050,7 +2062,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun activateStarPower() {
-        if (!isStrikeEnabledForCurrentMatch()) return
         if (_starPowerEnergy.value >= 0.5f && !_isStarPowerActive.value) {
             _isStarPowerActive.value = true
             soundFx.playStarPower()
@@ -2114,7 +2125,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
         _rockMeter.value = (_rockMeter.value + rating.healthDelta).coerceIn(0f, 1f)
 
-        if (isStarPower && isStrikeEnabledForCurrentMatch()) {
+        if (isStarPower) {
             _starPowerEnergy.value = (_starPowerEnergy.value + 0.12f).coerceAtMost(1.0f)
         }
 
@@ -2398,6 +2409,22 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _multiplayerConnectionWarning.value = null
     }
 
+    private fun applyMultiplayerRoomTrack(room: MultiplayerRoomCloud): Boolean {
+        val track = if (room.trackId.startsWith("sha256_")) {
+            val fingerprint = room.trackId.removePrefix("sha256_")
+            _tracks.value.firstOrNull { it.contentHash.equals(fingerprint, ignoreCase = true) }
+        } else {
+            _tracks.value.firstOrNull { it.id == room.trackId }
+        }
+        if (track == null) {
+            _multiplayerError.value =
+                "A música escolhida pelo anfitrião (${room.trackTitle}) não está disponível nesta biblioteca. A partida foi bloqueada para não tocar outra faixa no lugar."
+            return false
+        }
+        selectTrack(track)
+        return true
+    }
+
     private fun effectiveMultiplayerNickname(): String {
         val fromAuth = (authUiState.value as? AuthUiState.Authenticated)?.nickname
         val fromStats = _playerStats.value.nickname.trim()
@@ -2454,25 +2481,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _localStrikeEnabled.value = enabled
             return
         }
-        val uid = multiplayerRepo?.currentUidOrNull()
-        if (room.hostUid != uid) {
-            _multiplayerError.value = "Apenas o anfitrião (${room.hostNickname}) pode alterar o Sistema de Strike."
+        if (room.statusEnum != RoomStatus.WAITING) {
+            _multiplayerError.value = "A decisão sobre Strike fica travada durante a partida."
             return
         }
-        if (room.statusEnum == RoomStatus.PLAYING) {
-            _multiplayerError.value = "O Sistema de Strike fica travado durante a partida."
-            return
-        }
-        _localStrikeEnabled.value = enabled
+        val repo = multiplayerRepo ?: return
         viewModelScope.launch {
-            multiplayerRepo.updateRoomHostConfig(
-                roomCode = room.roomCode,
-                mode = _multiplayerMode.value,
-                track = selectedTrack,
-                strikeEnabled = enabled
-            ).onFailure { err ->
-                _multiplayerError.value = err.message ?: "Falha ao atualizar o Sistema de Strike."
-            }
+            repo.updateParticipantStrikeConsent(room.roomCode, enabled)
+                .onFailure { err ->
+                    _multiplayerError.value = err.message ?: "Falha ao registrar sua decisão sobre Strike."
+                }
         }
     }
 
@@ -2525,7 +2543,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 nickname = effectiveMultiplayerNickname(),
                 instrument = selectedInstrument,
                 difficulty = selectedDifficulty,
-                strikeEnabled = _localStrikeEnabled.value,
+                strikeEnabled = false,
                 customRoomCode = customRoomCode
             )
             res.onSuccess { room ->
@@ -2574,7 +2592,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 _multiplayerMode.value = room.modeEnum
                 _localStrikeEnabled.value = room.strikeEnabled
                 setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                applyMultiplayerRoomTrack(room)
+                repo.getCurrentParticipant(room.roomCode).onSuccess { participant ->
+                    selectInstrument(participant.instrumentEnum)
+                    selectDifficulty(participant.difficultyEnum)
+                }
                 startObservingMultiplayerRoom(room.roomCode)
             }.onFailure { err ->
                 _multiplayerError.value = err.message ?: "Não foi possível entrar na sala."
@@ -2622,12 +2644,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             _multiplayerError.value = "Aguarde pelo menos 1 outro jogador entrar na sala '${room.roomCode}' (ou compartilhe o código)."
             return
         }
+        val undecidedStrike = participants.filter { it.strikeConsent == null }
+        if (undecidedStrike.isNotEmpty()) {
+            val names = undecidedStrike.joinToString { it.nickname }
+            _multiplayerError.value = "Aguardando a decisão de Strike de: $names. Cada jogador precisa escolher COM ou SEM STRIKE."
+            return
+        }
         val unreadyGuests = participants.filter { it.userId != uid && !it.ready }
         if (unreadyGuests.isNotEmpty()) {
             val names = unreadyGuests.joinToString { it.nickname }
             _multiplayerError.value = "Aguardando confirmação PRONTO de: $names."
             return
         }
+        val strikeConsensus = participants.isNotEmpty() && participants.all { it.strikeConsent == true }
 
         viewModelScope.launch {
             _isMultiplayerBusy.value = true
@@ -2644,7 +2673,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 mode = _multiplayerMode.value,
                 track = selectedTrack,
                 status = RoomStatus.PLAYING,
-                winnerUid = ""
+                winnerUid = "",
+                strikeEnabled = strikeConsensus
             )
             res.onFailure { err ->
                 _multiplayerError.value = err.message ?: "Não foi possível iniciar a partida online."
@@ -2675,6 +2705,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             res.onSuccess { refreshed ->
                 _multiplayerRoom.value = refreshed
                 _multiplayerConnectionWarning.value = null
+                applyMultiplayerRoomTrack(refreshed)
+                repo.getCurrentParticipant(refreshed.roomCode).onSuccess { participant ->
+                    selectInstrument(participant.instrumentEnum)
+                    selectDifficulty(participant.difficultyEnum)
+                }
                 startObservingMultiplayerRoom(refreshed.roomCode)
             }.onFailure { err ->
                 _multiplayerConnectionWarning.value = "Falha ao reconectar: ${err.message}"
@@ -2762,14 +2797,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     _multiplayerMode.value = room.modeEnum
                     _localStrikeEnabled.value = room.strikeEnabled
                     setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                    _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                    val roomTrackAvailable = applyMultiplayerRoomTrack(room)
 
                     if (room.statusEnum == RoomStatus.PLAYING &&
                         !hasAutoStartedRoomMatch &&
                         _currentScreen.value !is GameScreen.Gameplay
                     ) {
                         hasAutoStartedRoomMatch = true
-                        startMatch()
+                        if (roomTrackAvailable) {
+                            viewModelScope.launch {
+                                repo.getCurrentParticipant(roomCode)
+                                    .onSuccess { participant ->
+                                        selectInstrument(participant.instrumentEnum)
+                                        selectDifficulty(participant.difficultyEnum)
+                                        startMatch()
+                                    }
+                                    .onFailure { err ->
+                                        _multiplayerError.value = err.message
+                                        hasAutoStartedRoomMatch = false
+                                    }
+                            }
+                        } else {
+                            hasAutoStartedRoomMatch = false
+                        }
                     } else if (room.statusEnum != RoomStatus.PLAYING) {
                         hasAutoStartedRoomMatch = false
                     }

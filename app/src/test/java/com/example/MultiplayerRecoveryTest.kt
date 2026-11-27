@@ -91,7 +91,9 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         } catch (_: FirebaseAuthUserCollisionException) {
             bobAuth.signInWithEmailAndPassword(email, "password123").await()
         }
-        return checkNotNull(result.user?.uid)
+        val signedInUser = checkNotNull(result.user)
+        signedInUser.getIdToken(true).await()
+        return checkNotNull(signedInUser.uid)
     }
 
     @Test
@@ -138,18 +140,29 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.waitForIdle()
         assertTrue(vm.currentScreen.value is GameScreen.CompetitiveMultiplayer)
 
-        composeTestRule.onNodeWithTag("multiplayer_google_signin_button").assertIsDisplayed()
+        // Valida e alterna as abas enquanto ainda estão visíveis no topo do painel.
         composeTestRule.onNodeWithTag("multiplayer_tab_battle").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_tab_band").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_start_button").assertIsDisplayed()
-
-        // Alterna abas e retorna para a página principal
-        composeTestRule.onNodeWithTag("multiplayer_tab_band").performClick()
-        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("multiplayer_tab_band")
+            .assertIsDisplayed()
+            .performClick()
+        composeTestRule.waitUntil(timeoutMillis = 6_000) {
+            vm.multiplayerMode.value == MultiplayerMode.BAND_COOP
+        }
         assertEquals(MultiplayerMode.BAND_COOP, vm.multiplayerMode.value)
 
+        // Depois valida os controles inferiores, rolando o painel quando necessário.
+        composeTestRule.onNodeWithTag("multiplayer_google_signin_button")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_start_button")
+            .performScrollTo()
+            .assertIsDisplayed()
+
+        // Retorna para a página principal sem depender da conclusão de animações.
         vm.navigateBack()
-        composeTestRule.waitForIdle()
+        composeTestRule.waitUntil(timeoutMillis = 6_000) {
+            vm.currentScreen.value is GameScreen.MainMenu
+        }
         assertTrue(vm.currentScreen.value is GameScreen.MainMenu)
         composeTestRule.onNodeWithTag("menu_multiplayer").assertIsDisplayed()
     }
@@ -185,7 +198,8 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         val roomCode = "ROCK-$tag"
         val aliceUid = awaitWithMainLooper { signInTestUser("mp_alice_$tag@test.com") }
 
-        val vm = GameViewModel(app)
+        val vm = GameViewModel(app, firebaseApp)
+        assertEquals("ViewModel must use the authenticated test account", aliceUid, vm.currentMultiplayerUid())
         vm.updateGuestNickname("AliceLead")
         vm.enterGame()
 
@@ -204,12 +218,13 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         assertTrue(vm.currentScreen.value is GameScreen.CompetitiveMultiplayer)
 
         vm.createMultiplayerRoom(MultiplayerMode.BATTLE_1V1, customRoomCode = roomCode)
-        waitUntilWithMainLooper { vm.multiplayerRoom.value != null }
+        waitUntilWithMainLooper(timeoutMs = 15000) { vm.multiplayerRoom.value != null || vm.multiplayerError.value != null }
+        assertNotNull("Room creation failed: ${vm.multiplayerError.value}", vm.multiplayerRoom.value)
         composeTestRule.waitForIdle()
         assertEquals(roomCode, vm.multiplayerRoom.value?.roomCode)
         composeTestRule.onNodeWithTag("multiplayer_room_code_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_invite_button").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("participant_card_$aliceUid").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_invite_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("participant_card_$aliceUid").performScrollTo().assertIsDisplayed()
 
         // 2. Segundo jogador (Bob) entra na sala pelo código
         val (bobAuth, bobRepo) = getOrInitSecondaryBobRepo(app)
@@ -222,6 +237,8 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // Espera sincronização em tempo real no ViewModel da Alice
         waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("multiplayer_participants_list")
+            .performScrollToNode(hasTestTag("participant_card_$bobUid"))
         composeTestRule.onNodeWithTag("participant_card_$bobUid").assertIsDisplayed()
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
@@ -252,17 +269,34 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("multiplayer_error_banner").assertIsDisplayed()
 
-        // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
+        // 6. Ambos os jogadores precisam registrar explicitamente o aceite de Strike.
+        // O anfitrião usa o mesmo caminho do app; Bob confirma pela própria conta.
+        vm.setMultiplayerStrikeEnabled(true)
+        awaitWithMainLooper {
+            bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
+        }
+        waitUntilWithMainLooper {
+            vm.multiplayerParticipants.value.size >= 2 &&
+                vm.multiplayerParticipants.value.all { it.strikeConsent == true }
+        }
+
+        // Inicia a partida sincronizada após Bob voltar online e sai limpo para o Menu Principal.
         awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
         }
         vm.startMultiplayerMatch()
-        waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
+        waitUntilWithMainLooper {
+            vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING &&
+                vm.currentScreen.value is GameScreen.Gameplay
+        }
 
-        // Encerra partida/sala e retorna à página principal
+        // Aguarda a navegação automática para Gameplay terminar antes do encerramento,
+        // evitando uma corrida entre o observador da sala e o retorno ao menu.
+        // Encerra partida/sala e retorna à página principal.
         vm.stop()
         vm.leaveMultiplayerRoom()
         vm.navigateTo(GameScreen.MainMenu, pushStack = false)
+        waitUntilWithMainLooper { vm.currentScreen.value is GameScreen.MainMenu }
         composeTestRule.waitForIdle()
         assertNull(vm.multiplayerRoom.value)
         assertTrue(vm.currentScreen.value is GameScreen.MainMenu)

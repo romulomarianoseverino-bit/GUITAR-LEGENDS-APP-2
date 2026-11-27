@@ -4,11 +4,15 @@ on:
   push:
     branches:
       - main
+      - fix/multiplayer-audio-fingerprint-loadout
     paths:
       - "app/**"
       - "gradle/**"
       - "*.gradle*"
       - "settings.gradle.kts"
+      - "firestore.rules"
+      - "firestore.test.js"
+      - "firebase.json"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
@@ -43,14 +47,16 @@ jobs:
         with:
           gradle-version: "9.3.1"
 
-      - name: Instalar Firebase CLI
-        run: npm install --global firebase-tools@13.35.1
+      - name: Instalar Firebase CLI e dependências dos testes de regras
+        run: |
+          npm install --global firebase-tools@13.35.1
+          npm install --no-save @firebase/rules-unit-testing@3 firebase@10
 
-      - name: Executar testes unitários com Auth e Firestore Emulator
+      - name: Executar testes de regras, unitários e integração
         id: tests
         run: |
           firebase emulators:exec --project demo-no-project --only auth,firestore \
-            'gradle --no-daemon testDebugUnitTest'
+            'node --test firestore.test.js && gradle --no-daemon testDebugUnitTest'
 
       # Usa exclusivamente o keystore permanente do Guitar Legends, armazenado
       # nos segredos do GitHub. Se estiver ausente ou inválido, a compilação para.
@@ -116,14 +122,13 @@ jobs:
           echo "STORE_PASSWORD=$GH_SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
           echo "KEY_PASSWORD=$GH_SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
 
-      # A compilação é independente do resultado dos testes automatizados.
-      # Assim, uma falha isolada não impede a geração de um APK para validação humana.
-      # O job continuará marcado como falho se os testes falharem; nenhum erro será ocultado.
-      - name: Compilar APK candidato para teste humano
+      # Só gera o APK candidato quando os testes automatizados passam.
+      # Não executar clean aqui: isso apagaria os relatórios de teste antes do upload.
+      - name: Compilar APK candidato após testes aprovados
         id: build_apk
-        if: always() && steps.prepare_signing.outcome == 'success' && !cancelled()
+        if: steps.tests.outcome == 'success' && steps.prepare_signing.outcome == 'success' && !cancelled()
         run: |
-          gradle --no-daemon clean assembleRelease
+          gradle --no-daemon assembleRelease
           mkdir -p app/build/outputs/apk/release
           {
             echo "Tipo: APK candidato para teste humano (NAO VALIDADO PARA RELEASE)"

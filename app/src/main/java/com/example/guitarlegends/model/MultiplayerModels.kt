@@ -41,7 +41,7 @@ data class MultiplayerRoomCloud(
     val memberUids: List<String> = emptyList(),
     val winnerUid: String = "",
     val inviteMessage: String = "",
-    val strikeEnabled: Boolean = true,
+    val strikeEnabled: Boolean = false,
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     @ServerTimestamp
@@ -87,6 +87,7 @@ data class MultiplayerParticipantCloud(
     val combo: Int = 0,
     val rockMeter: Double = 0.6,
     val starPowerActive: Boolean = false,
+    val strikeConsent: Boolean? = null,
     val lastHeartbeatMs: Long = 0L,
     @ServerTimestamp
     val joinedAt: Timestamp? = null,
@@ -120,6 +121,7 @@ data class MultiplayerParticipantCloud(
         "combo" to combo.coerceIn(0, 100_000),
         "rockMeter" to rockMeter.coerceIn(0.0, 1.0),
         "starPowerActive" to starPowerActive,
+        "strikeConsent" to strikeConsent,
         "lastHeartbeatMs" to lastHeartbeatMs.coerceAtLeast(0L),
         "joinedAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()

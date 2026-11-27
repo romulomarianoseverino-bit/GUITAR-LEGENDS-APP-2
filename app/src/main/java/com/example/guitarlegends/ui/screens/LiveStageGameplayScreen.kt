@@ -100,12 +100,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val partnerDisplayName = partnerParticipant?.nickname
         ?: if (mpMode == MultiplayerMode.BATTLE_1V1) "Rival 1v1" else "Parceiro Banda"
 
-    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, strikeEnabled, isDualMultiplayer) {
+    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, isDualMultiplayer) {
         if (!isDualMultiplayer) emptyList()
-        else {
-            val generated = AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
-            if (strikeEnabled) generated else generated.map { it.copy(isStarPower = false) }
-        }
+        else AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
     }
     var partnerScoreLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
     var partnerComboLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
@@ -454,7 +451,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             VocalMelodyPitchBar(
                 currentTimeMs = currentPosMs,
                 activeNotes = activeNotes,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
+                isStarPowerActive = isStarPowerActive,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = if (isDualMultiplayer) 74.dp else 42.dp)
@@ -476,8 +473,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 isStarPowerActive = isStarPowerActive
             )
 
-            // Star Power Activator Button (exibido apenas quando Strike está ativo)
-            if (strikeEnabled) {
+            // Star Power é independente da configuração de Strike.
+            run {
                 val canActivateStarPower = starPowerEnergy >= 0.5f && !isStarPowerActive
                 Button(
                     onClick = { viewModel.activateStarPower() },
@@ -542,11 +539,11 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 }
             }
 
-            AnalogRockMeterWithTubes(
+            PerformanceApprovalGauge(
                 rockMeter = rockMeter,
-                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
-                showStarPowerTubes = strikeEnabled
+                starPowerEnergy = starPowerEnergy,
+                isStarPowerActive = isStarPowerActive,
+                showStarPowerTubes = false
             )
         }
 
@@ -966,11 +963,11 @@ private fun GuitarAmpScoreCabinet(
 }
 
 /**
- * Medidor Analógico Semicircular "ROCK" com ponteiro móvel e 5 válvulas luminosas
+ * Medidor analógico semicircular de aprovação com ponteiro móvel e acabamento metálico
  * ciano de Energia Estrelar no topo, fiel à referência clássica de console.
  */
 @Composable
-private fun AnalogRockMeterWithTubes(
+private fun PerformanceApprovalGauge(
     rockMeter: Float,
     starPowerEnergy: Float,
     isStarPowerActive: Boolean,
@@ -991,7 +988,7 @@ private fun AnalogRockMeterWithTubes(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .width(114.dp)
-            .testTag("analog_rock_meter")
+            .testTag("performance_approval_gauge")
     ) {
         Box(
             modifier = Modifier
@@ -1137,7 +1134,7 @@ private fun AnalogRockMeterWithTubes(
             }
 
             Text(
-                text = "ROCK",
+                text = "APROVAÇÃO",
                 color = Color.Black,
                 fontWeight = FontWeight.Black,
                 fontSize = 10.sp,
@@ -1146,7 +1143,7 @@ private fun AnalogRockMeterWithTubes(
             )
         }
 
-        // Badge de status de vibração da plateia
+        // Faixa de leitura da aprovação atual
         Surface(
             color = Color(0xCC120D1D),
             shape = RoundedCornerShape(6.dp),
