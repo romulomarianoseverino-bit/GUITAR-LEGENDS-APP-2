@@ -387,6 +387,167 @@ class MusicLibraryRepository(private val context: Context) {
         }
     }
 
+    private fun persistToSharedMusic(source: File, displayName: String, mimeType: String): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return source.absolutePath
+
+        val extension = getExtensionFromName(displayName).lowercase()
+        val resolvedMime = mimeType.takeIf { it.startsWith("audio/") } ?: when (extension) {
+            "mp3" -> "audio/mpeg"
+            "wav" -> "audio/wav"
+            "ogg" -> "audio/ogg"
+            "m4a" -> "audio/mp4"
+            "aac" -> "audio/aac"
+            "flac" -> "audio/flac"
+            else -> "application/octet-stream"
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, resolvedMime)
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                "${Environment.DIRECTORY_MUSIC}/Guitar Legends/"
+            )
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val destination = context.contentResolver.insert(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+            values
+        ) ?: throw IllegalStateException("Não foi possível criar o arquivo em Music/Guitar Legends.")
+
+        try {
+            val output = context.contentResolver.openOutputStream(destination, "w")
+                ?: throw IllegalStateException("Não foi possível gravar a música no armazenamento compartilhado.")
+            output.use { stream ->
+                source.inputStream().use { input -> input.copyTo(stream) }
+            }
+            val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            context.contentResolver.update(destination, ready, null, null)
+            return destination.toString()
+        } catch (error: Exception) {
+            runCatching { context.contentResolver.delete(destination, null, null) }
+            throw error
+        }
+    }
+
+    private fun trackExists(uriString: String): Boolean {
+        if (uriString.isBlank()) return false
+        return if (uriString.startsWith("content://")) {
+            runCatching {
+                context.contentResolver.openInputStream(Uri.parse(uriString))?.use { it.read() >= -1 } == true
+            }.getOrDefault(false)
+        } else {
+            val file = File(uriString)
+            file.exists() && file.isFile && file.length() > 0L
+        }
+    }
+
+    private fun sha256Track(uriString: String?): String? {
+        if (uriString.isNullOrBlank()) return null
+        return runCatching {
+            if (uriString.startsWith("content://")) {
+                context.contentResolver.openInputStream(Uri.parse(uriString))?.use(::sha256)
+            } else {
+                val file = File(uriString)
+                if (file.exists() && file.isFile && file.length() > 0L) sha256(file) else null
+            }
+        }.getOrNull()
+    }
+
+    private fun deleteStoredUri(uriString: String) {
+        runCatching {
+            if (uriString.startsWith("content://")) {
+                context.contentResolver.delete(Uri.parse(uriString), null, null)
+            } else {
+                val file = File(uriString)
+                if (file.parentFile == storageDir) file.delete()
+            }
+        }
+    }
+
+    private fun discoverSharedTracks(knownHashes: MutableSet<String>): List<Track> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val restored = mutableListOf<Track>()
+        val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.MIME_TYPE
+        )
+        val relativePath = "${Environment.DIRECTORY_MUSIC}/Guitar Legends/"
+        return try {
+            context.contentResolver.query(
+                collection,
+                projection,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf(relativePath),
+                "${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+                val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE)
+
+                while (cursor.moveToNext()) {
+                    val mediaUri = ContentUris.withAppendedId(collection, cursor.getLong(idColumn))
+                    val digest = sha256Track(mediaUri.toString()) ?: continue
+                    if (!knownHashes.add(digest)) continue
+
+                    val displayName = cursor.getString(nameColumn).orEmpty().ifBlank { "Música importada.mp3" }
+                    val extension = getExtensionFromName(displayName).lowercase()
+                    if (extension !in allowedExtensions) continue
+                    val temp = File(context.cacheDir, "restore_${UUID.randomUUID()}.$extension")
+                    try {
+                        val input = context.contentResolver.openInputStream(mediaUri) ?: continue
+                        input.use { source ->
+                            FileOutputStream(temp).use { output -> source.copyTo(output) }
+                        }
+                        val analysis = PcmAudioAnalyzer.analyzeFile(temp, extension)
+                        if (!analysis.isValidAudio || !analysis.isDecodable || analysis.durationMs < 1_000L) continue
+
+                        val rawTitle = cursor.getString(titleColumn).orEmpty()
+                            .ifBlank { displayName.substringBeforeLast(".") }
+                        val artist = cursor.getString(artistColumn).orEmpty().ifBlank { "Artista Local" }
+                        val duration = analysis.durationMs.takeIf { it > 0L }
+                            ?: cursor.getLong(durationColumn).coerceAtLeast(0L)
+                        val short = duration in 1_000L..14_999L
+                        restored.add(
+                            Track(
+                                id = "track_user_${digest.take(16)}",
+                                title = rawTitle,
+                                artist = artist,
+                                durationMs = duration,
+                                bpm = analysis.bpm,
+                                genre = "Arquivo Pessoal (${extension.uppercase()})",
+                                isBuiltIn = false,
+                                uriString = mediaUri.toString(),
+                                bpmConfidence = analysis.bpmConfidence,
+                                bpmIsEstimated = analysis.bpmIsEstimated,
+                                onsetTimesMs = analysis.onsetTimesMs,
+                                isShortAudio = short,
+                                audioClassification = when {
+                                    short -> AudioClassification.SHORT_CLIP
+                                    analysis.bpmConfidence == BpmConfidence.LOW_UNRELIABLE -> AudioClassification.UNVERIFIED_STREAM
+                                    else -> AudioClassification.MUSIC_FULL
+                                },
+                                mimeType = cursor.getString(mimeColumn).orEmpty()
+                            )
+                        )
+                    } finally {
+                        runCatching { temp.delete() }
+                    }
+                }
+            }
+            restored
+        } catch (_: Exception) {
+            restored
+        }
+    }
+
     private fun sha256(file: File): String =
         file.inputStream().use(::sha256)
 
