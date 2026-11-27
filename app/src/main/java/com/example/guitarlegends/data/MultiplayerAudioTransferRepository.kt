@@ -238,6 +238,30 @@ class MultiplayerAudioTransferRepository(
         awaitClose { listener.remove() }
     }
 
+    suspend fun deleteRoomTransfers(roomCode: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        return try {
+            val room = roomRef(roomCode).get().await()
+            if (room.getString("hostUid") != uid || room.getString("status") !in listOf("FINISHED", "CLOSED")) {
+                throw IllegalStateException("Somente o anfitrião pode limpar os áudios após o encerramento da sala.")
+            }
+            val transfers = roomRef(roomCode).collection("audio_transfers").get().await().documents
+            transfers.forEach { transfer ->
+                val chunks = transfer.reference.collection("chunks").get().await().documents
+                chunks.chunked(400).forEach { group ->
+                    val batch = firestore.batch()
+                    group.forEach { chunk -> batch.delete(chunk.reference) }
+                    batch.commit().await()
+                }
+                transfer.reference.delete().await()
+            }
+            Result.success(Unit)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
     suspend fun downloadToCache(roomCode: String, transferId: String): Result<Pair<MultiplayerAudioTransferCloud, File>> {
         if (auth.currentUser == null) return Result.failure(IllegalStateException("Usuário não autenticado."))
         var destination: File? = null
