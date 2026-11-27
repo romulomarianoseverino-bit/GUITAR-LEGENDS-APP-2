@@ -132,8 +132,8 @@ jobs:
             echo "Resultado dos testes automatizados: ${{ steps.tests.outcome }}"
           } > app/build/outputs/apk/release/BUILD-INFO.txt
 
-      - name: Publicar APK candidato para teste humano
-        if: always() && steps.build_apk.outcome == 'success'
+      - name: Publicação do APK bloqueada até validação final em dispositivos
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: Guitar-Legends-APK-candidato-assinado-chave-permanente-nao-validado
