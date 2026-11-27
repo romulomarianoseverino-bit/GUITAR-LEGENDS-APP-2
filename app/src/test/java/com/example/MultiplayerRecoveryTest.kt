@@ -35,6 +35,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Before
@@ -259,6 +260,33 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         }
         vm.startMultiplayerMatch()
         waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
+
+        // 7. Strike só é liberado com consentimento de todos; ataques funcionam nos dois sentidos.
+        awaitWithMainLooper {
+            bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
+        }
+        waitUntilWithMainLooper { vm.isStrikeEnabledForCurrentMatch() }
+
+        val bobAttackId = awaitWithMainLooper {
+            bobRepo.sendStrike(roomCode, aliceUid, "LANE_INVERSION").getOrThrow()
+        }
+        waitUntilWithMainLooper { vm.incomingStrike.value?.id == bobAttackId }
+        vm.defendStrike(bobAttackId)
+        waitUntilWithMainLooper {
+            vm.strikeEvents.value.any { it.id == bobAttackId && it.status == "DEFENDED" }
+        }
+
+        vm.sendStrike(bobUid, "FOG")
+        val aliceAttackReceivedByBob = awaitWithMainLooper {
+            withTimeout(6000L) {
+                bobRepo.observeStrikes(roomCode).first { events ->
+                    events.any { it.attackerUid == aliceUid && it.targetUid == bobUid && it.power == "FOG" }
+                }
+            }
+        }
+        assertTrue(aliceAttackReceivedByBob.any {
+            it.attackerUid == aliceUid && it.targetUid == bobUid && it.power == "FOG"
+        })
 
         // Encerra partida/sala e retorna à página principal
         vm.stop()
