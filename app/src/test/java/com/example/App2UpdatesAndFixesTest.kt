@@ -268,6 +268,67 @@ class App2UpdatesAndFixesTest {
     }
 
     @Test
+    fun `05b - Strike controls require unanimous consent and expose attack and defense actions`() {
+        val vm = GameViewModel(app)
+        val room = MultiplayerRoomCloud(
+            id = "ROCK-TEST",
+            roomCode = "ROCK-TEST",
+            hostUid = "host",
+            hostNickname = "Host",
+            status = RoomStatus.PLAYING.name,
+            memberUids = listOf("host", "guest"),
+            strikeEnabled = true
+        )
+        setVmStateFlow(vm, "_multiplayerRoom", room)
+        setVmStateFlow(
+            vm,
+            "_multiplayerParticipants",
+            listOf(
+                MultiplayerParticipantCloud(userId = "host", nickname = "Host", strikeConsent = true),
+                MultiplayerParticipantCloud(userId = "guest", nickname = "Guest", strikeConsent = false)
+            )
+        )
+
+        composeTestRule.setContent {
+            MyApplicationTheme {
+                LiveStageGameplayScreen(viewModel = vm)
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("star_power_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("strike_attack_inversion_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("strike_attack_fog_button").assertDoesNotExist()
+
+        setVmStateFlow(
+            vm,
+            "_multiplayerParticipants",
+            listOf(
+                MultiplayerParticipantCloud(userId = "host", nickname = "Host", strikeConsent = true),
+                MultiplayerParticipantCloud(userId = "guest", nickname = "Guest", strikeConsent = true)
+            )
+        )
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("strike_attack_inversion_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("strike_attack_fog_button").assertIsDisplayed()
+
+        setVmStateFlow(
+            vm,
+            "_incomingStrike",
+            StrikeEventCloud(
+                id = "strike-test",
+                attackerUid = "host",
+                targetUid = "guest",
+                power = "FOG",
+                createdAtMs = System.currentTimeMillis()
+            )
+        )
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("strike_incoming_panel").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("strike_defend_button").assertIsDisplayed()
+    }
+
+    @Test
     fun `06 - multiplayer lobby exposes Strike System pre-match toggle`() {
         val vm = GameViewModel(app)
         composeTestRule.setContent {
