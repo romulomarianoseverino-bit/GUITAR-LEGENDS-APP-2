@@ -3145,7 +3145,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         viewModelScope.launch {
             val heartbeat = repo.sendHeartbeat(room.roomCode, ParticipantConnectionState.ONLINE)
             if (heartbeat.isSuccess) {
-                if (roomObserveJob?.isActive != true || participantsObserveJob?.isActive != true) {
+                if (roomObserveJob?.isActive != true || participantsObserveJob?.isActive != true || strikesObserveJob?.isActive != true) {
                     startObservingMultiplayerRoom(room.roomCode)
                 }
                 val warning = _multiplayerConnectionWarning.value.orEmpty()
