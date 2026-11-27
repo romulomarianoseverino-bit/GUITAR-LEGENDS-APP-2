@@ -3236,6 +3236,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         if (staleNames.isNotEmpty()) {
             _multiplayerConnectionWarning.value =
                 "Conexão instável ou desconectado(s): ${staleNames.joinToString(", ")}"
+        } else if (_multiplayerConnectionWarning.value
+                ?.startsWith("Conexão instável ou desconectado(s):") == true
+        ) {
+            // Remove o aviso quando o heartbeat do participante voltar a chegar.
+            _multiplayerConnectionWarning.value = null
         }
     }
 
