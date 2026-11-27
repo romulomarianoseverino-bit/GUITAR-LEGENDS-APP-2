@@ -127,10 +127,9 @@ jobs:
             adb shell monkey -p com.aistudio.applet.kpfcic 1
             sleep 20
             adb shell pidof com.aistudio.applet.kpfcic
-            if adb logcat -d -s AndroidRuntime:E | grep -q "FATAL EXCEPTION"; then
-              adb logcat -d -s AndroidRuntime:E
-              exit 1
-            fi
+            RUNTIME_LOG="$RUNNER_TEMP/android-runtime-errors.log"
+            adb logcat -d -s AndroidRuntime:E > "$RUNTIME_LOG"
+            python3 -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]); data=p.read_text(errors="replace"); print(data); sys.exit(1 if "FATAL EXCEPTION" in data else 0)' "$RUNTIME_LOG"
 
       - name: Publicar relatórios de testes
         if: always()
