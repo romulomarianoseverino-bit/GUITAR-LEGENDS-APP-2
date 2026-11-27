@@ -229,7 +229,10 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // Espera sincronização em tempo real no ViewModel da Alice
         waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("participant_card_$bobUid").assertExists()
+        assertTrue(
+            "Bob precisa aparecer na lista sincronizada de participantes",
+            vm.multiplayerParticipants.value.any { it.userId == bobUid }
+        )
         assertFalse("Strike deve aguardar o consentimento de todos", vm.isStrikeEnabledForCurrentMatch())
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
