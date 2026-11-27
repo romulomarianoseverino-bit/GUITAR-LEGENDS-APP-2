@@ -26,8 +26,10 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.guitarlegends.data.FriendRequestCloud
 import com.example.guitarlegends.data.GoogleCredentialResult
 import com.example.guitarlegends.data.GoogleSignInHelper
+import com.example.guitarlegends.data.RoomInviteCloud
 import com.example.guitarlegends.model.*
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.AuthUiState
