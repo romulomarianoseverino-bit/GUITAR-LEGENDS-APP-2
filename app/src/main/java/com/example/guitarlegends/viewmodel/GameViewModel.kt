@@ -190,8 +190,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     val friendRequests: StateFlow<List<FriendRequestCloud>> = _friendRequests.asStateFlow()
     private val _roomInvites = MutableStateFlow<List<RoomInviteCloud>>(emptyList())
     val roomInvites: StateFlow<List<RoomInviteCloud>> = _roomInvites.asStateFlow()
-    private val _friendPresence = MutableStateFlow<Map<String, Boolean>>(emptyMap())
-    val friendPresence: StateFlow<Map<String, Boolean>> = _friendPresence.asStateFlow()
+    private val privacyPreferences = context.getSharedPreferences("multiplayer_privacy", Context.MODE_PRIVATE)
+    private val _allowFriendRoomInvites = MutableStateFlow(privacyPreferences.getBoolean("allow_friend_room_invites", true))
+    val allowFriendRoomInvites: StateFlow<Boolean> = _allowFriendRoomInvites.asStateFlow()
+    private val _friendPresence = MutableStateFlow<Map<String, FriendPresenceCloud>>(emptyMap())
+    val friendPresence: StateFlow<Map<String, FriendPresenceCloud>> = _friendPresence.asStateFlow()
     private val _friendsMessage = MutableStateFlow<String?>(null)
     val friendsMessage: StateFlow<String?> = _friendsMessage.asStateFlow()
     private var friendsObserveJob: Job? = null
@@ -958,7 +961,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             roomInvitesObserveJob?.cancel()
             friendPresenceObserveJob?.cancel()
             presenceHeartbeatJob?.cancel()
-            runCatching { friendsRepo?.setPresence(false) }
+            runCatching { friendsRepo?.setPresence(false, _allowFriendRoomInvites.value) }
             _friendRequests.value = emptyList()
             _roomInvites.value = emptyList()
             _friendPresence.value = emptyMap()
@@ -2528,7 +2531,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
         presenceHeartbeatJob = viewModelScope.launch {
             while (isActive) {
-                repo.setPresence(true)
+                repo.setPresence(true, _allowFriendRoomInvites.value)
                 delay(25_000L)
             }
         }
@@ -2602,6 +2605,14 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             }.onFailure { error ->
                 _friendsMessage.value = error.message ?: "Não foi possível responder ao convite."
             }
+        }
+    }
+
+    fun setAllowFriendRoomInvites(allowed: Boolean) {
+        _allowFriendRoomInvites.value = allowed
+        privacyPreferences.edit().putBoolean("allow_friend_room_invites", allowed).apply()
+        viewModelScope.launch {
+            friendsRepo?.setPresence(true, allowed)
         }
     }
 
