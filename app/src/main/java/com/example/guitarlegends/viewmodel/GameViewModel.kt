@@ -3154,7 +3154,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun leaveMultiplayerRoom() {
-        val roomCode = _multiplayerRoom.value?.roomCode
+        val activeRoom = _multiplayerRoom.value
+        val roomCode = activeRoom?.roomCode
+        val leavingLastHost = activeRoom?.hostUid == multiplayerRepo?.currentUidOrNull() &&
+            _multiplayerParticipants.value.size <= 1
         audioTransferJob?.cancel()
         _pendingRoomAudioChoice.value?.file?.delete()
         _pendingRoomAudioChoice.value = null
@@ -3175,7 +3178,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         val repo = multiplayerRepo ?: return
         if (!roomCode.isNullOrBlank() && repo.currentUidOrNull() != null) {
             viewModelScope.launch {
-                repo.leaveOrCloseRoom(roomCode)
+                repo.leaveOrCloseRoom(roomCode).onSuccess {
+                    if (leavingLastHost) audioTransferRepo?.deleteRoomTransfers(roomCode)
+                }
             }
         }
     }
