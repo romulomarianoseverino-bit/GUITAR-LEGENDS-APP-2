@@ -2616,7 +2616,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         val previousTrack = selectedTrack
         selectTrack(track)
         val room = _multiplayerRoom.value ?: return
-        val uid = multiplayerRepo?.currentUidOrNull() ?: return
+        val multiplayer = multiplayerRepo ?: return
+        val uid = multiplayer.currentUidOrNull() ?: return
         if (room.hostUid == uid) {
             viewModelScope.launch {
                 _isMultiplayerBusy.value = true
@@ -2636,7 +2637,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     transferId = transfer.id
                     fingerprint = transfer.sha256
                 }
-                multiplayerRepo.updateRoomHostConfig(
+                multiplayer.updateRoomHostConfig(
                     roomCode = room.roomCode,
                     mode = _multiplayerMode.value,
                     track = track,
