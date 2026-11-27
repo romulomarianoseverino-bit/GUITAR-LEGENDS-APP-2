@@ -1878,11 +1878,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         totalHitCount = 0
         totalMissCount = 0
 
-        val strikeAllowed = isStrikeEnabledForCurrentMatch()
         adaptiveEngine = AdaptiveEngine(selectedDifficulty, _playerStats.value.glassAdaptiveEnabled)
-        val rawNotes = AudioAnalyzer.generateChart(selectedTrack, selectedInstrument, selectedDifficulty)
-        val generatedNotes = if (strikeAllowed) rawNotes else rawNotes.map { it.copy(isStarPower = false) }
-        _activeNotes.value = generatedNotes
+        _activeNotes.value = AudioAnalyzer.generateChart(selectedTrack, selectedInstrument, selectedDifficulty)
 
         audioPlayer.loadTrack(
             track = selectedTrack,
@@ -1923,10 +1920,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                         }
                     }
 
-                    if (!isStrikeEnabledForCurrentMatch()) {
-                        _isStarPowerActive.value = false
-                        _starPowerEnergy.value = 0f
-                    } else if (_isStarPowerActive.value) {
+                    if (_isStarPowerActive.value) {
                         _starPowerEnergy.value = (_starPowerEnergy.value - 0.003f).coerceAtLeast(0f)
                         if (_starPowerEnergy.value <= 0f) {
                             _isStarPowerActive.value = false
@@ -1976,7 +1970,6 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
     internal fun processSustainingNotes(currentPosMs: Long) {
         val heldLanes = _activeFretLanes.value
-        val strikeAllowed = isStrikeEnabledForCurrentMatch()
         for (note in _activeNotes.value) {
             if (note.isHit && note.durationMs > 50L && note.isSustaining && !note.sustainBroken && !note.sustainCompleted) {
                 val endMs = note.timeMs + note.durationMs
@@ -1992,7 +1985,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     note.lastSustainTickMs = currentPosMs
                     val tickPts = (12 * selectedDifficulty.scoreMultiplier * _multiplier.value).toInt().coerceAtLeast(1)
                     _score.value = _score.value + tickPts
-                    if (note.isStarPower && strikeAllowed) {
+                    if (note.isStarPower) {
                         _starPowerEnergy.value = (_starPowerEnergy.value + 0.012f).coerceAtMost(1.0f)
                     }
                 }
@@ -2051,7 +2044,6 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun activateStarPower() {
-        if (!isStrikeEnabledForCurrentMatch()) return
         if (_starPowerEnergy.value >= 0.5f && !_isStarPowerActive.value) {
             _isStarPowerActive.value = true
             soundFx.playStarPower()
@@ -2115,7 +2107,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
         _rockMeter.value = (_rockMeter.value + rating.healthDelta).coerceIn(0f, 1f)
 
-        if (isStarPower && isStrikeEnabledForCurrentMatch()) {
+        if (isStarPower) {
             _starPowerEnergy.value = (_starPowerEnergy.value + 0.12f).coerceAtMost(1.0f)
         }
 
