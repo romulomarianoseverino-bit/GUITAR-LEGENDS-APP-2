@@ -2525,6 +2525,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             lastPreparedAudioTransferId = room.audioTransferId
             selectTrack(exactLocalTrack)
             _isRoomAudioReady.value = true
+            _pendingRoomAudioChoice.value?.file?.delete()
             _pendingRoomAudioChoice.value = null
             temporaryRoomAudioFile?.delete()
             temporaryRoomAudioFile = null
