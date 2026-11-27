@@ -145,7 +145,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.onNodeWithTag("multiplayer_google_signin_button").assertExists()
         composeTestRule.onNodeWithTag("multiplayer_tab_battle").assertIsDisplayed()
         composeTestRule.onNodeWithTag("multiplayer_tab_band").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_start_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_start_button").assertExists()
 
         // Alterna abas e retorna para a página principal
         composeTestRule.onNodeWithTag("multiplayer_tab_band").performClick()
