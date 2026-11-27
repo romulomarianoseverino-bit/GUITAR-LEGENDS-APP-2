@@ -60,6 +60,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val friendPresence by viewModel.friendPresence.collectAsState()
     val allowFriendRoomInvites by viewModel.allowFriendRoomInvites.collectAsState()
     val friendsMessage by viewModel.friendsMessage.collectAsState()
+    val pendingRoomAudioChoice by viewModel.pendingRoomAudioChoice.collectAsState()
+    val isRoomAudioTransferLoading by viewModel.isRoomAudioTransferLoading.collectAsState()
+    val isRoomAudioReady by viewModel.isRoomAudioReady.collectAsState()
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -518,6 +521,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                             enabled = !isBusy,
                             modifier = Modifier.fillMaxWidth(),
                             testTag = "multiplayer_ready_button",
+                            enabled = isRoomAudioReady,
                             containerColor = if (readyNow) RockAccentGreen else RockAccentGold,
                             contentColor = Color.Black
                         )
@@ -795,6 +799,38 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                     }
                 }
             }
+        }
+        if (isRoomAudioTransferLoading) {
+            Text(
+                "Recebendo e verificando a música enviada pelo anfitrião...",
+                color = RockAccentCyan,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+        pendingRoomAudioChoice?.let { pending ->
+            AlertDialog(
+                onDismissRequest = { },
+                title = { Text("MÚSICA RECEBIDA DO ANFITRIÃO", fontWeight = FontWeight.Black) },
+                text = {
+                    Text(
+                        "${pending.transfer.title} — ${pending.transfer.artist}\n\nComo deseja usar esta faixa? Você pode mantê-la apenas durante esta partida ou adicioná-la permanentemente à biblioteca do Guitar Legends.",
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = viewModel::useReceivedRoomAudioTemporarily,
+                        modifier = Modifier.testTag("received_audio_use_temporary_button")
+                    ) { Text("SÓ NESTA PARTIDA") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = viewModel::saveReceivedRoomAudioToLibrary,
+                        modifier = Modifier.testTag("received_audio_save_library_button")
+                    ) { Text("ADICIONAR À BIBLIOTECA") }
+                }
+            )
         }
     }
 }
