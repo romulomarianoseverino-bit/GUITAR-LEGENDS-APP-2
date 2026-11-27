@@ -2353,7 +2353,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                         track = selectedTrack,
                         status = RoomStatus.FINISHED,
                         winnerUid = topUid
-                    )
+                    ).onSuccess {
+                        audioTransferRepo?.deleteRoomTransfers(activeRoom.roomCode)
+                    }
                 }
             }
         }
