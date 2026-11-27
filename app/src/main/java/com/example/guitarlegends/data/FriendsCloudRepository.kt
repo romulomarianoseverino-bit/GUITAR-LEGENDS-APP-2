@@ -38,7 +38,7 @@ data class FriendPresenceCloud(
     val lastSeenAtMs: Long = 0L
 ) {
     fun isOnline(nowMs: Long = System.currentTimeMillis()): Boolean =
-        online && lastSeenAtMs > 0L && nowMs - lastSeenAtMs <= 45_000L
+        online && lastSeenAtMs > 0L && nowMs - lastSeenAtMs <= 150_000L
 }
 
 /**
