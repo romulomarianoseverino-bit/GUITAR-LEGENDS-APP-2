@@ -31,6 +31,7 @@ jobs:
           /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Preparar a mesma chave permanente do fluxo oficial
+        if: success()
         env:
           KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
@@ -71,22 +72,8 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Compilar APK assinado com a chave permanente
-        id: release_build
-        run: gradle --no-daemon assembleRelease
-
-      - name: Publicar APK assinado
-        if: always() && steps.release_build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Guitar-Legends-APK-release
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Executar testes unitários
+      - name: Executar testes unitários antes de compilar
         id: tests
-        if: always()
         run: |
           gradle --no-daemon testDebugUnitTest \
             --tests "com.example.ExampleUnitTest" \
@@ -94,3 +81,18 @@ jobs:
             --tests "com.example.GuestModeAndAccountTest" \
             --tests "com.example.StudioAndHardwareTest" \
             --tests "com.example.ReconstructedFeaturesTest"
+
+      - name: Compilar APK assinado com a chave permanente
+        id: release_build
+        if: success()
+        run: gradle --no-daemon assembleRelease
+
+      - name: Publicar APK assinado
+        if: success() && steps.release_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Guitar-Legends-APK-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
