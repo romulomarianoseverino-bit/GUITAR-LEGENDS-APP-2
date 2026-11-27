@@ -2521,6 +2521,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             selectTrack(exactLocalTrack)
             _isRoomAudioReady.value = true
             _pendingRoomAudioChoice.value = null
+            temporaryRoomAudioFile?.delete()
+            temporaryRoomAudioFile = null
             return
         }
 
@@ -2530,7 +2532,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             return
         }
         if (lastPreparedAudioTransferId == room.audioTransferId &&
-            (_pendingRoomAudioChoice.value?.transfer?.id == room.audioTransferId || _isRoomAudioTransferLoading.value)
+            (_pendingRoomAudioChoice.value?.transfer?.id == room.audioTransferId ||
+                _isRoomAudioTransferLoading.value || _isRoomAudioReady.value)
         ) return
 
         lastPreparedAudioTransferId = room.audioTransferId
@@ -3220,7 +3223,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     _multiplayerMode.value = room.modeEnum
                     _localStrikeEnabled.value = room.strikeEnabled
                     setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                    _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                    if (room.audioTransferId != lastPreparedAudioTransferId || room.audioTransferId.isBlank()) {
+                        prepareRoomAudio(room)
+                    }
 
                     if (room.statusEnum == RoomStatus.PLAYING &&
                         !hasAutoStartedRoomMatch &&
