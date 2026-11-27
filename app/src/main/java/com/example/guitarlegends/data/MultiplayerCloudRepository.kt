@@ -320,8 +320,7 @@ class MultiplayerCloudRepository(
         score: Int,
         combo: Int,
         rockMeter: Float,
-        starPowerActive: Boolean,
-        connectionState: ParticipantConnectionState = ParticipantConnectionState.ONLINE
+        starPowerActive: Boolean
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
@@ -337,10 +336,7 @@ class MultiplayerCloudRepository(
                         "score" to score.coerceIn(0, 50_000_000),
                         "combo" to combo.coerceIn(0, 100_000),
                         "rockMeter" to rockMeter.toDouble().coerceIn(0.0, 1.0),
-                        "starPowerActive" to starPowerActive,
-                        "connectionState" to connectionState.name,
-                        "lastHeartbeatMs" to System.currentTimeMillis(),
-                        "updatedAt" to FieldValue.serverTimestamp()
+                        "starPowerActive" to starPowerActive
                     )
                 )
                 .await()
