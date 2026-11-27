@@ -2552,6 +2552,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                         !track.isBuiltIn && transferRepo.fingerprint(track).getOrNull() == room.trackFingerprint
                     }
                     if (matchingTrack != null) {
+                        lastPreparedAudioTransferId = room.audioTransferId
                         selectTrack(matchingTrack)
                         _isRoomAudioReady.value = true
                         _pendingRoomAudioChoice.value = null
@@ -2625,6 +2626,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         val multiplayer = multiplayerRepo ?: return
         val uid = multiplayer.currentUidOrNull() ?: return
         if (room.hostUid == uid) {
+            if (_multiplayerParticipants.value.any { it.userId != uid && it.ready }) {
+                _multiplayerError.value = "Peça aos participantes para desmarcarem PRONTO antes de trocar a música."
+                selectTrack(previousTrack)
+                return
+            }
             viewModelScope.launch {
                 _isMultiplayerBusy.value = true
                 _multiplayerError.value = null
