@@ -515,6 +515,7 @@ service cloud.firestore {
         incoming().createdAtMs is int && incoming().updatedAtMs is int &&
         !isBlocked(incoming().senderUid, incoming().recipientUid);
       allow update: if isSignedIn() &&
+        requestId == friendPairId(existing().senderUid, existing().recipientUid) &&
         incoming().senderUid == existing().senderUid &&
         incoming().recipientUid == existing().recipientUid &&
         incoming().senderNickname == existing().senderNickname &&
