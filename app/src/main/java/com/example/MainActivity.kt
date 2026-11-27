@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.refreshGamepadConnection()
+        viewModel.onAppForegrounded()
     }
 
     override fun onPause() {
