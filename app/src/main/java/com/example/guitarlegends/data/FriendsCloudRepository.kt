@@ -169,7 +169,8 @@ class FriendsCloudRepository(
         return try {
             firestore.collection("users").document(uid).collection("blocked").document(blockedUid)
                 .set(mapOf("userId" to blockedUid, "createdAtMs" to System.currentTimeMillis())).await()
-            firestore.collection("friend_requests").document(pairId(uid, blockedUid)).delete().await()
+            val friendshipRef = firestore.collection("friend_requests").document(pairId(uid, blockedUid))
+            if (friendshipRef.get().await().exists()) friendshipRef.delete().await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -218,6 +219,9 @@ class FriendsCloudRepository(
         return try {
             val friendship = firestore.collection("friend_requests").document(pairId(uid, friendUid)).get().await()
             if (friendship.getString("status") != "ACCEPTED") throw IllegalStateException("Este jogador não está na sua lista de amigos.")
+            val presence = firestore.collection("user_presence").document(friendUid).get().await()
+                .toObject(FriendPresenceCloud::class.java)
+            if (presence?.isOnline() != true) throw IllegalStateException("Este amigo não está online no momento.")
             val room = firestore.collection("multiplayer_rooms").document(roomCode).get().await()
             val members = room.get("memberUids") as? List<*> ?: emptyList<Any>()
             if (!room.exists() || uid !in members || room.getString("status") !in listOf("WAITING", "PLAYING")) {
