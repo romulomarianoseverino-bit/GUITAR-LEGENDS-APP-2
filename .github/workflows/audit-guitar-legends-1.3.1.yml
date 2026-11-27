@@ -122,7 +122,7 @@ jobs:
           emulator-boot-timeout: 1200
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           script: |
-            set -euo pipefail
+            set -eu
             adb install app/build/outputs/apk/release/app-release.apk
             adb shell monkey -p com.aistudio.applet.kpfcic 1
             sleep 20
