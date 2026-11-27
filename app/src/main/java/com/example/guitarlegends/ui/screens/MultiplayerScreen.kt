@@ -52,7 +52,6 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val tracks by viewModel.tracks.collectAsState()
     val selectedTrack by viewModel.selectedTrackFlow.collectAsState()
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
-    val effectiveStrikeEnabled = room?.strikeEnabled ?: localStrikeEnabled
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -66,6 +65,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val isHost = room != null && selfUid != null && room!!.hostUid == selfUid
     val canEditStrike = room == null || (isHost && room!!.statusEnum == RoomStatus.WAITING)
     val selfParticipant = participants.find { it.userId == selfUid }
+    val strikeRequested = room?.strikeEnabled ?: localStrikeEnabled
+    val allPlayersConsented = room == null || (participants.size >= 2 && participants.all { it.strikeConsent })
+    val effectiveStrikeEnabled = strikeRequested && allPlayersConsented
 
     Column(
         modifier = Modifier
@@ -192,9 +194,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                         onClick = { viewModel.setMultiplayerStrikeEnabled(true) },
                                         enabled = canEditStrike,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (effectiveStrikeEnabled) RockAccentCyan else Color(0x22FFFFFF),
-                                            contentColor = if (effectiveStrikeEnabled) Color.Black else Color.White,
-                                            disabledContainerColor = if (effectiveStrikeEnabled) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                            containerColor = if (strikeRequested) RockAccentCyan else Color(0x22FFFFFF),
+                                            contentColor = if (strikeRequested) Color.Black else Color.White,
+                                            disabledContainerColor = if (strikeRequested) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
@@ -204,7 +206,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             .testTag("multiplayer_strike_toggle_com")
                                     ) {
                                         Text(
-                                            text = if (effectiveStrikeEnabled) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
+                                            text = if (strikeRequested) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
                                             fontWeight = FontWeight.Black,
                                             fontSize = 9.sp,
                                             maxLines = 1
@@ -215,9 +217,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                         onClick = { viewModel.setMultiplayerStrikeEnabled(false) },
                                         enabled = canEditStrike,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (!effectiveStrikeEnabled) RockAccentGold else Color(0x22FFFFFF),
-                                            contentColor = if (!effectiveStrikeEnabled) Color.Black else Color.White,
-                                            disabledContainerColor = if (!effectiveStrikeEnabled) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                            containerColor = if (!strikeRequested) RockAccentGold else Color(0x22FFFFFF),
+                                            contentColor = if (!strikeRequested) Color.Black else Color.White,
+                                            disabledContainerColor = if (!strikeRequested) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
@@ -227,12 +229,39 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             .testTag("multiplayer_strike_toggle_sem")
                                     ) {
                                         Text(
-                                            text = if (!effectiveStrikeEnabled) "SEM STRIKE ✔" else "SEM STRIKE",
+                                            text = if (!strikeRequested) "SEM STRIKE ✔" else "SEM STRIKE",
                                             fontWeight = FontWeight.Black,
                                             fontSize = 9.sp,
                                             maxLines = 1
                                         )
                                     }
+                                }
+
+                                if (room != null && !isHost && room!!.statusEnum == RoomStatus.WAITING) {
+                                    val consented = selfParticipant?.strikeConsent == true
+                                    Button(
+                                        onClick = { viewModel.setMultiplayerStrikeConsent(!consented) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (consented) RockAccentCyan else RockAccentGold,
+                                            contentColor = Color.Black
+                                        ),
+                                        modifier = Modifier.fillMaxWidth().testTag("multiplayer_strike_consent_toggle")
+                                    ) {
+                                        Text(
+                                            text = if (consented) "CONSENTIMENTO DE STRIKE: ACEITO" else "ACEITAR STRIKE",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 9.sp
+                                        )
+                                    }
+                                }
+                                if (room != null && strikeRequested && !allPlayersConsented) {
+                                    Text(
+                                        text = "Aguardando consentimento de todos os jogadores. O Strike permanece desligado até todos aceitarem.",
+                                        color = RockAccentGold,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 9.sp
+                                    )
                                 }
                             }
                         }
