@@ -286,6 +286,7 @@ service cloud.firestore {
              data.combo is int && data.combo >= 0 && data.combo <= 100000 &&
              data.rockMeter is number && data.rockMeter >= 0 && data.rockMeter <= 1 &&
              data.starPowerActive is bool &&
+             (!('strikeConsent' in data) || data.strikeConsent is bool) &&
              data.lastHeartbeatMs is int && data.lastHeartbeatMs >= 0 &&
              data.joinedAt is timestamp && data.joinedAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -384,12 +385,12 @@ service cloud.firestore {
                          incoming().keys().hasAll([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          incoming().keys().hasOnly([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          isValidMultiplayerParticipant(incoming(), roomCode, participantUid);
 
@@ -404,7 +405,7 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'nickname', 'instrument', 'difficulty', 'ready',
                            'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'updatedAt'
                          ]);
 
         allow delete: if isSignedIn() &&
@@ -414,6 +415,54 @@ service cloud.firestore {
                            (exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
                             get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.hostUid == request.auth.uid)
                          );
+      }
+
+      function allStrikeParticipantsConsented() {
+        let room = get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data;
+        return room.memberUids.size() >= 2 &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[0])).data.strikeConsent == true &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[1])).data.strikeConsent == true &&
+          (room.memberUids.size() < 3 ||
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[2])).data.strikeConsent == true) &&
+          (room.memberUids.size() < 4 ||
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[3])).data.strikeConsent == true);
+      }
+
+      match /strikes/{strikeId} {
+        allow get, list: if isSignedIn() &&
+          exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+          request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids;
+
+        allow create: if isSignedIn() &&
+          isValidRoomCode(roomCode) &&
+          exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'PLAYING' &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.strikeEnabled == true &&
+          allStrikeParticipantsConsented() &&
+          incoming().keys().hasOnly(['roomCode', 'attackerUid', 'targetUid', 'power', 'createdAtMs', 'status', 'resolvedAtMs']) &&
+          incoming().roomCode == roomCode &&
+          incoming().attackerUid == request.auth.uid &&
+          incoming().targetUid is string &&
+          incoming().targetUid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids &&
+          incoming().targetUid != request.auth.uid &&
+          incoming().power in ['LANE_INVERSION', 'FOG'] &&
+          incoming().createdAtMs is int &&
+          incoming().status == 'PENDING' &&
+          incoming().resolvedAtMs == 0;
+
+        allow update: if isSignedIn() &&
+          existing().targetUid == request.auth.uid &&
+          existing().status == 'PENDING' &&
+          incoming().roomCode == existing().roomCode &&
+          incoming().attackerUid == existing().attackerUid &&
+          incoming().targetUid == existing().targetUid &&
+          incoming().power == existing().power &&
+          incoming().createdAtMs == existing().createdAtMs &&
+          incoming().status == 'DEFENDED' &&
+          incoming().resolvedAtMs is int &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolvedAtMs']);
+
+        allow delete: if false;
       }
     }
   }
