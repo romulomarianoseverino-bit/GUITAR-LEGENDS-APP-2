@@ -100,6 +100,12 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         if (db != null && auth != null) MultiplayerCloudRepository(db, auth) else null
     }
 
+    private val friendsRepo: FriendsCloudRepository? = run {
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
+        val auth = firebaseAuth
+        if (db != null && auth != null) FriendsCloudRepository(db, auth) else null
+    }
+
     // Navegação
     private val _currentScreen = MutableStateFlow<GameScreen>(GameScreen.Splash)
     val currentScreen: StateFlow<GameScreen> = _currentScreen.asStateFlow()
@@ -179,6 +185,19 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     private var strikesObserveJob: Job? = null
     private var heartbeatJob: Job? = null
     private var hasAutoStartedRoomMatch: Boolean = false
+
+    private val _friendRequests = MutableStateFlow<List<FriendRequestCloud>>(emptyList())
+    val friendRequests: StateFlow<List<FriendRequestCloud>> = _friendRequests.asStateFlow()
+    private val _roomInvites = MutableStateFlow<List<RoomInviteCloud>>(emptyList())
+    val roomInvites: StateFlow<List<RoomInviteCloud>> = _roomInvites.asStateFlow()
+    private val _friendPresence = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val friendPresence: StateFlow<Map<String, Boolean>> = _friendPresence.asStateFlow()
+    private val _friendsMessage = MutableStateFlow<String?>(null)
+    val friendsMessage: StateFlow<String?> = _friendsMessage.asStateFlow()
+    private var friendsObserveJob: Job? = null
+    private var roomInvitesObserveJob: Job? = null
+    private var friendPresenceObserveJob: Job? = null
+    private var presenceHeartbeatJob: Job? = null
 
     // Status & Progressão do Jogador
     private val _playerStats = MutableStateFlow(PlayerStats())
@@ -635,6 +654,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     nickname = remote.nickname
                 )
                 refreshAccountSubcollections()
+                startFriendsObservers()
                 checkForUpdates(silent = true)
             }
         }.onFailure { err ->
@@ -934,6 +954,14 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             leaveMultiplayerRoom()
             stop()
             stopPreview()
+            friendsObserveJob?.cancel()
+            roomInvitesObserveJob?.cancel()
+            friendPresenceObserveJob?.cancel()
+            presenceHeartbeatJob?.cancel()
+            runCatching { friendsRepo?.setPresence(false) }
+            _friendRequests.value = emptyList()
+            _roomInvites.value = emptyList()
+            _friendPresence.value = emptyMap()
             firebaseAuth?.signOut()
             GoogleSignInHelper.clearCredentials(context)
             val freshGuest = PlayerStats()
@@ -2473,6 +2501,114 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
     }
 
+    private fun startFriendsObservers() {
+        val repo = friendsRepo ?: return
+        friendsObserveJob?.cancel()
+        roomInvitesObserveJob?.cancel()
+        presenceHeartbeatJob?.cancel()
+        friendsObserveJob = viewModelScope.launch {
+            repo.observeRequests().collect { requests ->
+                _friendRequests.value = requests
+                val uid = firebaseAuth?.currentUser?.uid
+                val friendIds = requests.filter { it.status == "ACCEPTED" }.mapNotNull { request ->
+                    when (uid) {
+                        request.senderUid -> request.recipientUid
+                        request.recipientUid -> request.senderUid
+                        else -> null
+                    }
+                }.distinct()
+                friendPresenceObserveJob?.cancel()
+                friendPresenceObserveJob = viewModelScope.launch {
+                    repo.observePresence(friendIds).collect { _friendPresence.value = it }
+                }
+            }
+        }
+        roomInvitesObserveJob = viewModelScope.launch {
+            repo.observeRoomInvites().collect { _roomInvites.value = it }
+        }
+        presenceHeartbeatJob = viewModelScope.launch {
+            while (isActive) {
+                repo.setPresence(true)
+                delay(25_000L)
+            }
+        }
+    }
+
+    fun sendFriendRequest(nickname: String) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.sendFriendRequest(nickname).onSuccess {
+                _friendsMessage.value = "Solicitação de amizade enviada."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível enviar a solicitação."
+            }
+        }
+    }
+
+    fun respondToFriendRequest(requestId: String, accept: Boolean) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.respondToRequest(requestId, accept).onSuccess {
+                _friendsMessage.value = if (accept) "Amizade aceita." else "Solicitação recusada."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível responder à solicitação."
+            }
+        }
+    }
+
+    fun removeFriend(friendUid: String) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.removeFriend(friendUid).onSuccess {
+                _friendsMessage.value = "Amigo removido da lista."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível remover o amigo."
+            }
+        }
+    }
+
+    fun blockFriend(friendUid: String) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.blockUser(friendUid).onSuccess {
+                _friendsMessage.value = "Jogador bloqueado."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível bloquear o jogador."
+            }
+        }
+    }
+
+    fun sendRoomInviteToFriend(friendUid: String) {
+        val repo = friendsRepo ?: return
+        val room = _multiplayerRoom.value ?: run {
+            _friendsMessage.value = "Crie ou entre em uma sala antes de convidar um amigo."
+            return
+        }
+        viewModelScope.launch {
+            repo.sendRoomInvite(friendUid, room.roomCode, _playerStats.value.nickname).onSuccess {
+                _friendsMessage.value = "Convite enviado diretamente ao amigo."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível enviar o convite."
+            }
+        }
+    }
+
+    fun respondToFriendRoomInvite(inviteId: String, accept: Boolean) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.respondToRoomInvite(inviteId, accept).onSuccess { roomCode ->
+                _friendsMessage.value = if (accept) "Convite aceito. Entrando na sala..." else "Convite recusado."
+                if (!roomCode.isNullOrBlank()) joinMultiplayerRoom(roomCode)
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível responder ao convite."
+            }
+        }
+    }
+
+    fun clearFriendsMessage() {
+        _friendsMessage.value = null
+    }
+
     fun setMultiplayerStrikeConsent(consent: Boolean) {
         val room = _multiplayerRoom.value ?: return
         if (room.statusEnum != RoomStatus.WAITING) {
@@ -2844,6 +2980,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         participantsObserveJob = null
         strikesObserveJob?.cancel()
         strikesObserveJob = null
+        friendsObserveJob?.cancel()
+        roomInvitesObserveJob?.cancel()
+        friendPresenceObserveJob?.cancel()
+        presenceHeartbeatJob?.cancel()
         _strikeEvents.value = emptyList()
         _incomingStrike.value = null
         _activeStrikePower.value = null
