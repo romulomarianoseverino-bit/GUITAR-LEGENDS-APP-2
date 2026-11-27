@@ -508,6 +508,7 @@ service cloud.firestore {
         incoming().senderUid == request.auth.uid &&
         incoming().recipientUid is string &&
         incoming().recipientUid != request.auth.uid &&
+        requestId == friendPairId(incoming().senderUid, incoming().recipientUid) &&
         incoming().senderNickname is string && incoming().senderNickname.size() <= 24 &&
         incoming().recipientNickname is string && incoming().recipientNickname.size() <= 24 &&
         incoming().status == 'PENDING' &&
