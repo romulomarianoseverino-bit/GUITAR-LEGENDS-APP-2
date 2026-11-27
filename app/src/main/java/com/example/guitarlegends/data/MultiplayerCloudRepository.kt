@@ -5,7 +5,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -378,34 +377,52 @@ class MultiplayerCloudRepository(
         val path = "multiplayer_rooms/$normalized/strikes"
         return try {
             val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
-            // A validação do Strike depende do estado atual da partida; não aceite cache antigo.
-            val room = roomRef.get(Source.SERVER).await().toObject(MultiplayerRoomCloud::class.java)
-                ?: throw IllegalStateException("Sala não encontrada.")
-            if (room.statusEnum != RoomStatus.PLAYING) {
-                throw IllegalStateException("A partida ainda não está em andamento.")
-            }
-            if (!room.strikeEnabled) {
-                throw IllegalStateException("O anfitrião não habilitou o Strike nesta sala.")
-            }
-            if (uid !in room.memberUids) {
-                throw IllegalStateException("Seu jogador não consta mais na lista de participantes da sala.")
-            }
-            if (targetUid !in room.memberUids) {
-                throw IllegalStateException("O jogador escolhido não consta mais na lista de participantes.")
-            }
-            val ref = roomRef.collection("strikes").document()
-            ref.set(
-                mapOf(
-                    "roomCode" to normalized,
-                    "attackerUid" to uid,
-                    "targetUid" to targetUid,
-                    "power" to power,
-                    "createdAtMs" to System.currentTimeMillis(),
-                    "status" to "PENDING",
-                    "resolvedAtMs" to 0L
+            val strikeId = firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val room = roomSnap.toObject(MultiplayerRoomCloud::class.java)
+                    ?: throw IllegalStateException("Sala não encontrada.")
+
+                if (room.statusEnum != RoomStatus.PLAYING) {
+                    throw IllegalStateException("A partida ainda não está em andamento.")
+                }
+                if (!room.strikeEnabled) {
+                    throw IllegalStateException("O anfitrião não habilitou o Strike nesta sala.")
+                }
+                if (uid !in room.memberUids) {
+                    throw IllegalStateException("Seu jogador não consta mais na lista de participantes da sala.")
+                }
+                if (targetUid !in room.memberUids) {
+                    throw IllegalStateException("O jogador escolhido não consta mais na lista de participantes.")
+                }
+
+                // A decisão é conferida no servidor para todos os integrantes da sala.
+                // Assim, um cliente desatualizado não consegue enviar Strike sem consentimento.
+                val participantSnapshots = room.memberUids.distinct().map { memberUid ->
+                    tx.get(roomRef.collection("participants").document(memberUid))
+                }
+                if (participantSnapshots.size < 2 || participantSnapshots.any { !it.exists() }) {
+                    throw IllegalStateException("Não foi possível confirmar todos os participantes da sala.")
+                }
+                if (participantSnapshots.any { it.getBoolean("strikeConsent") != true }) {
+                    throw IllegalStateException("O Strike só pode ser usado quando todos os jogadores concordarem.")
+                }
+
+                val strikeRef = roomRef.collection("strikes").document()
+                tx.set(
+                    strikeRef,
+                    mapOf(
+                        "roomCode" to normalized,
+                        "attackerUid" to uid,
+                        "targetUid" to targetUid,
+                        "power" to power,
+                        "createdAtMs" to System.currentTimeMillis(),
+                        "status" to "PENDING",
+                        "resolvedAtMs" to 0L
+                    )
                 )
-            ).await()
-            Result.success(ref.id)
+                strikeRef.id
+            }.await()
+            Result.success(strikeId)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Result.failure(runCatching { handleFirestoreError(e, OperationType.WRITE, path, auth) }.exceptionOrNull() ?: e)
