@@ -32,7 +32,7 @@ data class RoomInviteCloud(
 )
 
 data class FriendPresenceCloud(
-    @DocumentId val userId: String = "",
+    val userId: String = "",
     val online: Boolean = false,
     val lastSeenAtMs: Long = 0L
 ) {
