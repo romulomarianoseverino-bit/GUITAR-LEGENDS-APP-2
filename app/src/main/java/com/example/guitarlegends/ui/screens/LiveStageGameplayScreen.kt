@@ -100,12 +100,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val partnerDisplayName = partnerParticipant?.nickname
         ?: if (mpMode == MultiplayerMode.BATTLE_1V1) "Rival 1v1" else "Parceiro Banda"
 
-    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, strikeEnabled, isDualMultiplayer) {
+    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, isDualMultiplayer) {
         if (!isDualMultiplayer) emptyList()
-        else {
-            val generated = AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
-            if (strikeEnabled) generated else generated.map { it.copy(isStarPower = false) }
-        }
+        else AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
     }
     var partnerScoreLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
     var partnerComboLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
@@ -454,7 +451,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             VocalMelodyPitchBar(
                 currentTimeMs = currentPosMs,
                 activeNotes = activeNotes,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
+                isStarPowerActive = isStarPowerActive,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = if (isDualMultiplayer) 74.dp else 42.dp)
@@ -476,8 +473,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 isStarPowerActive = isStarPowerActive
             )
 
-            // Star Power Activator Button (exibido apenas quando Strike está ativo)
-            if (strikeEnabled) {
+            // Star Power é individual e independente do Sistema de Strike.
+            run {
                 val canActivateStarPower = starPowerEnergy >= 0.5f && !isStarPowerActive
                 Button(
                     onClick = { viewModel.activateStarPower() },
@@ -544,9 +541,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
 
             AnalogRockMeterWithTubes(
                 rockMeter = rockMeter,
-                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
-                showStarPowerTubes = strikeEnabled
+                starPowerEnergy = starPowerEnergy,
+                isStarPowerActive = isStarPowerActive,
+                showStarPowerTubes = true
             )
         }
 
