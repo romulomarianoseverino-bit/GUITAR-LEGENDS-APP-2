@@ -485,7 +485,9 @@ class MultiplayerCloudRepository(
         track: Track,
         status: RoomStatus? = null,
         winnerUid: String? = null,
-        strikeEnabled: Boolean? = null
+        strikeEnabled: Boolean? = null,
+        audioTransferId: String? = null,
+        trackFingerprint: String? = null
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
@@ -507,6 +509,12 @@ class MultiplayerCloudRepository(
             }
             if (strikeEnabled != null) {
                 updates["strikeEnabled"] = strikeEnabled
+            }
+            if (audioTransferId != null) {
+                updates["audioTransferId"] = audioTransferId.take(64)
+            }
+            if (trackFingerprint != null) {
+                updates["trackFingerprint"] = trackFingerprint.take(64)
             }
             firestore.collection("multiplayer_rooms")
                 .document(normalized)
