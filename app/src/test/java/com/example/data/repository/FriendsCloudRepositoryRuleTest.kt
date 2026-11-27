@@ -56,7 +56,7 @@ class FriendsCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
         signInTestUser("bob_$suffix@test.com")
         assertTrue(bobFriends.setPresence(online = true).isSuccess)
         val onlineState = withTimeout(FLOW_TIMEOUT_MS) {
-            bobFriends.observePresence(listOf(aliceUid)).first { it[aliceUid] == true }
+            bobFriends.observePresence(listOf(aliceUid)).first { it[aliceUid]?.isOnline() == true }
         }
         assertTrue(onlineState[aliceUid]?.isOnline() == true)
 
