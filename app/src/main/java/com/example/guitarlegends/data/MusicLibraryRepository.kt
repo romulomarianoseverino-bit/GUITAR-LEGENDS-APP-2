@@ -255,6 +255,51 @@ class MusicLibraryRepository(private val context: Context) {
         }
     }
 
+    suspend fun createTemporaryTrack(
+        audioFile: File,
+        title: String,
+        artist: String,
+        mimeType: String
+    ): Result<Track> = withContext(Dispatchers.IO) {
+        try {
+            if (!audioFile.exists() || !audioFile.isFile || audioFile.length() <= 0L) {
+                throw IllegalArgumentException("O áudio temporário não está disponível.")
+            }
+            val extension = getExtensionFromName(audioFile.name).lowercase()
+            if (extension !in allowedExtensions) throw IllegalArgumentException("Formato de áudio recebido não suportado.")
+            val analysis = PcmAudioAnalyzer.analyzeFile(audioFile, extension)
+            if (!analysis.isValidAudio || !analysis.isDecodable || analysis.durationMs < 1_000L) {
+                throw IllegalArgumentException(analysis.errorMessage ?: "O áudio recebido não pôde ser validado.")
+            }
+            val isShort = analysis.durationMs in 1_000L..14_999L
+            val classification = when {
+                isShort -> AudioClassification.SHORT_CLIP
+                analysis.bpmConfidence == BpmConfidence.LOW_UNRELIABLE -> AudioClassification.UNVERIFIED_STREAM
+                else -> AudioClassification.MUSIC_FULL
+            }
+            Result.success(
+                Track(
+                    id = "track_temp_${UUID.randomUUID().toString().take(12)}",
+                    title = title.ifBlank { audioFile.name.substringBeforeLast(".") }.take(160),
+                    artist = artist.ifBlank { "Artista Local" }.take(120),
+                    durationMs = analysis.durationMs,
+                    bpm = analysis.bpm,
+                    genre = "Temporária da partida (${extension.uppercase()})",
+                    isBuiltIn = false,
+                    uriString = audioFile.absolutePath,
+                    bpmConfidence = analysis.bpmConfidence,
+                    bpmIsEstimated = analysis.bpmIsEstimated,
+                    onsetTimesMs = analysis.onsetTimesMs,
+                    isShortAudio = isShort,
+                    audioClassification = classification,
+                    mimeType = mimeType
+                )
+            )
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
     suspend fun updateTrackCalibration(
         trackId: String,
         manualBpm: Double?,
