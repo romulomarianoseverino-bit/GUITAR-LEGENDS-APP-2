@@ -15,8 +15,13 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.util.UUID
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class FriendsCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     private fun tag(): String = UUID.randomUUID().toString().replace("-", "").take(5).lowercase()
