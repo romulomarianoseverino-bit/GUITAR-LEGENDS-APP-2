@@ -225,6 +225,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("participant_card_$bobUid").assertIsDisplayed()
+        assertFalse("Strike deve aguardar o consentimento de todos", vm.isStrikeEnabledForCurrentMatch())
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
         awaitWithMainLooper {
