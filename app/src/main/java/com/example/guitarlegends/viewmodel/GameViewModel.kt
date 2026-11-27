@@ -93,7 +93,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         if (db != null && auth != null) AccountCloudRepository(db, auth) else null
     }
     private val multiplayerRepo: MultiplayerCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        // O Firestore precisa usar o mesmo FirebaseApp do FirebaseAuth injetado.
+        // Isso mantém produção e testes/emuladores autenticados no mesmo projeto.
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) MultiplayerCloudRepository(db, auth) else null
     }
