@@ -2547,6 +2547,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                                     if (_incomingStrike.value?.id == event.id) _incomingStrike.value = null
                                     _activeStrikePower.value = event.power
                                     activeStrikeUntilMs = System.currentTimeMillis() + 5_000L
+                                    launch { repo.markStrikeApplied(roomCode, event.id) }
                                 }
                             }
                         }
