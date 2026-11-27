@@ -274,12 +274,18 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
         }
         vm.startMultiplayerMatch()
-        waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
+        waitUntilWithMainLooper {
+            vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING &&
+                vm.currentScreen.value is GameScreen.Gameplay
+        }
 
-        // Encerra partida/sala e retorna à página principal
+        // Aguarda a navegação automática para Gameplay terminar antes do encerramento,
+        // evitando uma corrida entre o observador da sala e o retorno ao menu.
+        // Encerra partida/sala e retorna à página principal.
         vm.stop()
         vm.leaveMultiplayerRoom()
         vm.navigateTo(GameScreen.MainMenu, pushStack = false)
+        waitUntilWithMainLooper { vm.currentScreen.value is GameScreen.MainMenu }
         composeTestRule.waitForIdle()
         assertNull(vm.multiplayerRoom.value)
         assertTrue(vm.currentScreen.value is GameScreen.MainMenu)
