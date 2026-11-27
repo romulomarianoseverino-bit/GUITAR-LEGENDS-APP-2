@@ -108,7 +108,9 @@ data class MultiplayerParticipantCloud(
         get() = runCatching { ParticipantConnectionState.valueOf(connectionState) }
             .getOrDefault(ParticipantConnectionState.ONLINE)
 
-    fun isStale(nowMs: Long, thresholdMs: Long = 14_000L): Boolean {
+    // A tolerância de 2 minutos cobre pausas breves do Android ao alternar para outro aplicativo.
+    // DISCONNECTED explícito continua sendo reconhecido imediatamente.
+    fun isStale(nowMs: Long, thresholdMs: Long = 120_000L): Boolean {
         if (connectionStateEnum == ParticipantConnectionState.DISCONNECTED) return true
         return lastHeartbeatMs > 0L && (nowMs - lastHeartbeatMs) > thresholdMs
     }
