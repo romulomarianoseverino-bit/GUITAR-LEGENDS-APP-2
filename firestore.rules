@@ -488,6 +488,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/friend_requests/$(friendPairId(a, b))).data.status == 'ACCEPTED';
     }
 
+    function isBlocked(a, b) {
+      return exists(/databases/$(database)/documents/users/$(a)/blocked/$(b)) ||
+        exists(/databases/$(database)/documents/users/$(b)/blocked/$(a));
+    }
+
     match /friend_requests/{requestId} {
       allow get, list: if isSignedIn() &&
         (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
@@ -506,7 +511,8 @@ service cloud.firestore {
         incoming().senderNickname is string && incoming().senderNickname.size() <= 24 &&
         incoming().recipientNickname is string && incoming().recipientNickname.size() <= 24 &&
         incoming().status == 'PENDING' &&
-        incoming().createdAtMs is int && incoming().updatedAtMs is int;
+        incoming().createdAtMs is int && incoming().updatedAtMs is int &&
+        !isBlocked(incoming().senderUid, incoming().recipientUid);
       allow update: if isSignedIn() &&
         incoming().senderUid == existing().senderUid &&
         incoming().recipientUid == existing().recipientUid &&
@@ -515,6 +521,7 @@ service cloud.firestore {
         incoming().createdAtMs is int &&
         incoming().updatedAtMs is int &&
         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'createdAtMs', 'updatedAtMs']) &&
+        !isBlocked(incoming().senderUid, incoming().recipientUid) &&
         (
           (existing().recipientUid == request.auth.uid &&
             existing().status == 'PENDING' &&
@@ -558,7 +565,8 @@ service cloud.firestore {
         incoming().createdAtMs is int && incoming().updatedAtMs is int &&
         exists(/databases/$(database)/documents/multiplayer_rooms/$(incoming().roomCode)) &&
         request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(incoming().roomCode)).data.memberUids &&
-        areFriends(request.auth.uid, incoming().recipientUid);
+        areFriends(request.auth.uid, incoming().recipientUid) &&
+        !isBlocked(request.auth.uid, incoming().recipientUid);
       allow update: if isSignedIn() &&
         existing().recipientUid == request.auth.uid &&
         existing().status == 'PENDING' &&
