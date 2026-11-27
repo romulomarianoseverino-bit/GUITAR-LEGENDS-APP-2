@@ -145,7 +145,9 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.onNodeWithTag("multiplayer_tab_band")
             .assertIsDisplayed()
             .performClick()
-        composeTestRule.waitForIdle()
+        composeTestRule.waitUntil(timeoutMillis = 6_000) {
+            vm.multiplayerMode.value == MultiplayerMode.BAND_COOP
+        }
         assertEquals(MultiplayerMode.BAND_COOP, vm.multiplayerMode.value)
 
         // Depois valida os controles inferiores, rolando o painel quando necessário.
@@ -156,10 +158,11 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
             .performScrollTo()
             .assertIsDisplayed()
 
-        // Retorna para a página principal
-
+        // Retorna para a página principal sem depender da conclusão de animações.
         vm.navigateBack()
-        composeTestRule.waitForIdle()
+        composeTestRule.waitUntil(timeoutMillis = 6_000) {
+            vm.currentScreen.value is GameScreen.MainMenu
+        }
         assertTrue(vm.currentScreen.value is GameScreen.MainMenu)
         composeTestRule.onNodeWithTag("menu_multiplayer").assertIsDisplayed()
     }
