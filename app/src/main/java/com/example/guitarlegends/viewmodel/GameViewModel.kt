@@ -1988,7 +1988,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     internal fun processSustainingNotes(currentPosMs: Long) {
-        val heldLanes = _activeFretLanes.value
+        val heldLanes = _activeFretLanes.value.map { lane ->
+            if (_activeStrikePower.value == "LANE_INVERSION") selectedDifficulty.lanesUsed - 1 - lane else lane
+        }.toSet()
         for (note in _activeNotes.value) {
             if (note.isHit && note.durationMs > 50L && note.isSustaining && !note.sustainBroken && !note.sustainCompleted) {
                 val endMs = note.timeMs + note.durationMs
@@ -2035,8 +2037,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     fun onFretUp(lane: Int) {
         _activeFretLanes.value = _activeFretLanes.value - lane
         val currentPos = _currentSongTimeMs.value
+        val chartLane = if (_activeStrikePower.value == "LANE_INVERSION") {
+            selectedDifficulty.lanesUsed - 1 - lane
+        } else lane
         for (note in _activeNotes.value) {
-            if (note.lane == lane && note.isHit && note.isSustaining && !note.sustainCompleted) {
+            if (note.lane == chartLane && note.isHit && note.isSustaining && !note.sustainCompleted) {
                 if (currentPos < note.timeMs + note.durationMs - 40L) {
                     note.isSustaining = false
                     note.sustainBroken = true
@@ -2524,8 +2529,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 repo.observeStrikes(roomCode).collect { events ->
                     _strikeEvents.value = events
                     val uid = repo.currentUidOrNull()
-                    val pending = events.filter { it.targetUid == uid && it.status == "PENDING" }
-                    _incomingStrike.value = pending.firstOrNull { it.createdAtMs + 2_500L > System.currentTimeMillis() }
+                    val nowMs = System.currentTimeMillis()
+                    val pending = events.filter {
+                        it.targetUid == uid && it.status == "PENDING" && it.createdAtMs + 7_500L > nowMs
+                    }
+                    _incomingStrike.value = pending.firstOrNull { it.createdAtMs + 2_500L > nowMs }
                     for (event in pending) {
                         if (handledIds.add(event.id)) {
                             launch {
