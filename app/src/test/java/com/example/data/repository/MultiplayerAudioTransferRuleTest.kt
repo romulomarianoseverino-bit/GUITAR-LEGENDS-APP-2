@@ -27,7 +27,7 @@ class MultiplayerAudioTransferRuleTest : FirestoreEmulatorTestBase() {
         val roomCode = "AUDIO-$suffix"
         val room = withTimeout(6000L) {
             hostRooms.createRoom(
-                mode = MultiplayerMode.COOPERATIVE,
+                mode = MultiplayerMode.BAND_COOP,
                 track = AudioAnalyzer.BUILT_IN_TRACKS[0],
                 nickname = "HostAudio",
                 instrument = Instrument.GUITAR,
