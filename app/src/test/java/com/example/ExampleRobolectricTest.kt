@@ -319,7 +319,15 @@ class ExampleRobolectricTest {
         assertEquals(BpmConfidence.MANUAL, found.bpmConfidence)
         assertTrue(trackUriExists(context, found.uriString!!))
 
-        repoInstance2.deleteTrack(imported)
+        // Simula reinstalação: o manifesto privado some, mas o arquivo compartilhado deve ser reindexado.
+        File(context.filesDir, "library_manifest.json").delete()
+        val reindexed = repoInstance2.loadAllTracks().firstOrNull {
+            !it.isBuiltIn && it.uriString == imported.uriString
+        }
+        assertNotNull("Shared Music/Guitar Legends audio must be reindexed without the private manifest", reindexed)
+        assertEquals("immortal_solo", reindexed?.title)
+
+        repoInstance2.deleteTrack(reindexed!!)
         Unit
     }
 
