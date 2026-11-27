@@ -258,7 +258,18 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("multiplayer_error_banner").assertIsDisplayed()
 
-        // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
+        // 6. Ambos os jogadores precisam registrar explicitamente o aceite de Strike.
+        // O anfitrião usa o mesmo caminho do app; Bob confirma pela própria conta.
+        vm.setMultiplayerStrikeEnabled(true)
+        awaitWithMainLooper {
+            bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
+        }
+        waitUntilWithMainLooper {
+            vm.multiplayerParticipants.value.size >= 2 &&
+                vm.multiplayerParticipants.value.all { it.strikeConsent == true }
+        }
+
+        // Inicia a partida sincronizada após Bob voltar online e sai limpo para o Menu Principal.
         awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
         }
