@@ -110,6 +110,18 @@ class MultiplayerAudioTransferRepository(
         return temp
     }
 
+    suspend fun fingerprint(track: Track): Result<String> {
+        var sourceFile: File? = null
+        return try {
+            sourceFile = copyTrackToTemp(track)
+            Result.success(sha256(sourceFile))
+        } catch (error: Exception) {
+            Result.failure(error)
+        } finally {
+            sourceFile?.delete()
+        }
+    }
+
     suspend fun uploadTrack(roomCode: String, track: Track): Result<MultiplayerAudioTransferCloud> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
