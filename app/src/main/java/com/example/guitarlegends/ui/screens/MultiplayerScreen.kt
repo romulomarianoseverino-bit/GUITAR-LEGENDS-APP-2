@@ -565,6 +565,11 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     fontSize = 10.sp,
                                     modifier = Modifier.weight(1f)
                                 )
+                                if (room != null && !isRoomAudioReady && room.audioTransferId.isNotBlank()) {
+                                    TextButton(onClick = viewModel::retryRoomAudioTransfer) {
+                                        Text("TENTAR", color = RockAccentCyan, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                    }
+                                }
                                 TextButton(onClick = { viewModel.clearMultiplayerError() }) {
                                     Text("OK", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
                                 }
