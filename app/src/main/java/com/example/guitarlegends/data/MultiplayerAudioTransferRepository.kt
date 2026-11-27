@@ -2,6 +2,7 @@ package com.example.guitarlegends.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import com.example.guitarlegends.model.Track
 import com.google.firebase.auth.FirebaseAuth
@@ -64,6 +65,33 @@ class MultiplayerAudioTransferRepository(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun extensionFor(track: Track): String {
+        val uriString = track.uriString.orEmpty()
+        val name = if (uriString.startsWith("content://")) {
+            runCatching {
+                context.contentResolver.query(
+                    Uri.parse(uriString),
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else ""
+                }.orEmpty()
+            }.getOrDefault("")
+        } else File(uriString).name
+        val fromName = name.substringAfterLast('.', "").lowercase()
+        if (fromName in setOf("mp3", "wav", "ogg", "m4a", "aac", "flac")) return fromName
+        return when {
+            track.genre.contains("MP3", ignoreCase = true) || track.mimeType == "audio/mpeg" -> "mp3"
+            track.genre.contains("WAV", ignoreCase = true) || track.mimeType == "audio/wav" -> "wav"
+            track.genre.contains("OGG", ignoreCase = true) || track.mimeType == "audio/ogg" -> "ogg"
+            track.genre.contains("FLAC", ignoreCase = true) || track.mimeType == "audio/flac" -> "flac"
+            track.mimeType == "audio/aac" -> "aac"
+            else -> "m4a"
+        }
+    }
+
     private fun copyTrackToTemp(track: Track): File {
         val uriString = track.uriString ?: throw IllegalArgumentException("A faixa não possui arquivo de áudio local.")
         val temp = File(context.cacheDir, "transfer_source_${UUID.randomUUID()}.audio")
@@ -106,7 +134,7 @@ class MultiplayerAudioTransferRepository(
             val now = System.currentTimeMillis()
             val chunkCount = ((sourceFile.length() + CHUNK_BYTES - 1L) / CHUNK_BYTES).toInt()
             val fileName = track.title.trim().ifBlank { "musica" }
-                .replace(Regex("[^a-zA-Z0-9._-]"), "_").take(80) + ".audio"
+                .replace(Regex("[^a-zA-Z0-9._-]"), "_").take(80) + ".${extensionFor(track)}"
             val metadata = MultiplayerAudioTransferCloud(
                 id = transferId,
                 roomCode = roomCode.trim().uppercase(),
@@ -215,7 +243,8 @@ class MultiplayerAudioTransferRepository(
             if (chunks.size != metadata.chunkCount) {
                 throw IllegalStateException("A transferência recebeu apenas parte dos blocos de áudio.")
             }
-            destination = File(context.cacheDir, "match_audio_${metadata.sha256.take(16)}.audio")
+            val extension = metadata.fileName.substringAfterLast('.', "m4a").lowercase()
+            destination = File(context.cacheDir, "match_audio_${metadata.sha256.take(16)}.$extension")
             FileOutputStream(destination).use { output ->
                 var totalBytes = 0L
                 chunks.forEachIndexed { expectedIndex, chunk ->
