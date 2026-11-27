@@ -293,12 +293,7 @@ class MusicLibraryRepository(private val context: Context) {
                 )
             }
 
-            track.uriString?.let { path ->
-                val file = File(path)
-                if (file.exists() && file.parentFile == storageDir) {
-                    file.delete()
-                }
-            }
+            track.uriString?.let(::deleteStoredUri)
 
             // Limpa referências órfãs da faixa removida em todas as playlists locais
             val currentPlaylists = loadPlaylistsInternal()
@@ -433,7 +428,7 @@ class MusicLibraryRepository(private val context: Context) {
         if (uriString.isBlank()) return false
         return if (uriString.startsWith("content://")) {
             runCatching {
-                context.contentResolver.openInputStream(Uri.parse(uriString))?.use { it.read() >= -1 } == true
+                context.contentResolver.openInputStream(Uri.parse(uriString))?.use { it.read() >= 0 } == true
             }.getOrDefault(false)
         } else {
             val file = File(uriString)
