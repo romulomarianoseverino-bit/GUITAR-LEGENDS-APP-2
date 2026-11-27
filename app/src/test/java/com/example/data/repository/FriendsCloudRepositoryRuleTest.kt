@@ -58,8 +58,10 @@ class FriendsCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
         val onlineState = withTimeout(FLOW_TIMEOUT_MS) {
             bobFriends.observePresence(listOf(aliceUid)).first { it[aliceUid] == true }
         }
-        assertTrue(onlineState[aliceUid] == true)
+        assertTrue(onlineState[aliceUid]?.isOnline() == true)
 
+        // A preferência de privacidade do destinatário precisa bloquear convites diretos.
+        assertTrue(bobFriends.setPresence(online = true, allowRoomInvites = false).isSuccess)
         signInTestUser("alice_$suffix@test.com")
         val multiplayer = MultiplayerCloudRepository(firestore, auth)
         val roomCode = "FRIEND-$suffix".uppercase()
@@ -74,6 +76,12 @@ class FriendsCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
             ).getOrThrow()
         }
         assertEquals(aliceUid, room.hostUid)
+        val privacyBlockedInvite = aliceFriends.sendRoomInvite(bobUid, roomCode, "Alice_$suffix")
+        assertTrue("A friend who disabled room invitations must not receive an invite", privacyBlockedInvite.isFailure)
+
+        signInTestUser("bob_$suffix@test.com")
+        assertTrue(bobFriends.setPresence(online = true, allowRoomInvites = true).isSuccess)
+        signInTestUser("alice_$suffix@test.com")
         val inviteId = withTimeout(DEFAULT_TIMEOUT_MS) {
             aliceFriends.sendRoomInvite(bobUid, roomCode, "Alice_$suffix").getOrThrow()
         }
