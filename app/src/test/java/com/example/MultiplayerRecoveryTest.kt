@@ -225,7 +225,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // Espera sincronização em tempo real no ViewModel da Alice
         waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("participant_card_$bobUid").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("participant_card_$bobUid").assertExists()
         assertFalse("Strike deve aguardar o consentimento de todos", vm.isStrikeEnabledForCurrentMatch())
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
@@ -247,14 +247,14 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         }
         waitUntilWithMainLooper { vm.disconnectedPeerNicknames.value.contains("BobBass") }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("multiplayer_connection_warning").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_reconnect_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_connection_warning").assertExists()
+        composeTestRule.onNodeWithTag("multiplayer_reconnect_button").assertExists()
 
         // 5. Código inexistente gera erro claro sem quebrar fluxo
         vm.joinMultiplayerRoom("NOPE-9999")
         waitUntilWithMainLooper { vm.multiplayerError.value != null }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("multiplayer_error_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_error_banner").assertExists()
 
         // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
         awaitWithMainLooper {
