@@ -132,6 +132,41 @@ jobs:
             echo "Resultado dos testes automatizados: ${{ steps.tests.outcome }}"
           } > app/build/outputs/apk/release/BUILD-INFO.txt
 
+      - name: Validar assinatura, alinhamento e versão do APK
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
+          BADGING="$("$BUILD_TOOLS/aapt" dump badging "$APK" | head -n 1)"
+          echo "$BADGING"
+          echo "$BADGING" | grep -q "package: name='com.aistudio.applet.kpfcic'"
+          echo "$BADGING" | grep -q "versionCode='3'"
+          echo "$BADGING" | grep -q "versionName='1.3.1'"
+          sha256sum "$APK"
+
+      - name: Instalar e abrir APK no emulador Android 16
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim
+          script: |
+            set -euo pipefail
+            adb install app/build/outputs/apk/release/app-release.apk
+            adb shell monkey -p com.aistudio.applet.kpfcic 1
+            sleep 20
+            adb shell pidof com.aistudio.applet.kpfcic
+            if adb logcat -d -s AndroidRuntime:E | grep -q "FATAL EXCEPTION"; then
+              adb logcat -d -s AndroidRuntime:E
+              exit 1
+            fi
+
       - name: Publicação do APK bloqueada até validação final em dispositivos
         if: false
         uses: actions/upload-artifact@v4
