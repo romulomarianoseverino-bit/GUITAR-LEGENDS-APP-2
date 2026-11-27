@@ -207,6 +207,7 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
 
         vm.createMultiplayerRoom(MultiplayerMode.BATTLE_1V1, customRoomCode = roomCode)
         waitUntilWithMainLooper { vm.multiplayerRoom.value != null }
+        waitUntilWithMainLooper { vm.multiplayerParticipants.value.any { it.userId == aliceUid } }
         composeTestRule.waitForIdle()
         assertEquals(roomCode, vm.multiplayerRoom.value?.roomCode)
         composeTestRule.onNodeWithTag("multiplayer_room_code_card").assertIsDisplayed()
