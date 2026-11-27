@@ -2958,7 +2958,31 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     repo.leaveOrCloseRoom(previousCode)
                 }
                 _multiplayerRoom.value = room
+                _isRoomAudioReady.value = true
                 startObservingMultiplayerRoom(room.roomCode)
+                if (!selectedTrack.isBuiltIn) {
+                    val transferResult = audioTransferRepo?.uploadTrack(room.roomCode, selectedTrack)
+                    if (transferResult == null || transferResult.isFailure) {
+                        _multiplayerError.value = transferResult?.exceptionOrNull()?.message
+                            ?: "Não foi possível disponibilizar o áudio aos participantes."
+                    } else {
+                        val transfer = transferResult.getOrThrow()
+                        repo.updateRoomHostConfig(
+                            roomCode = room.roomCode,
+                            mode = mode,
+                            track = selectedTrack,
+                            audioTransferId = transfer.id,
+                            trackFingerprint = transfer.sha256
+                        ).onSuccess {
+                            _multiplayerRoom.value = room.copy(
+                                audioTransferId = transfer.id,
+                                trackFingerprint = transfer.sha256
+                            )
+                        }.onFailure { error ->
+                            _multiplayerError.value = error.message ?: "Não foi possível sincronizar os dados do áudio."
+                        }
+                    }
+                }
             }.onFailure { err ->
                 _multiplayerError.value = err.message ?: "Não foi possível criar a sala multiplayer."
             }
