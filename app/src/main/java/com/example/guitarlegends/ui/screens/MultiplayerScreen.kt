@@ -518,10 +518,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                         RockButton(
                             text = if (readyNow) "ESTOU PRONTO ✔" else "CONFIRMAR PRONTO",
                             onClick = { viewModel.toggleMultiplayerReady() },
-                            enabled = !isBusy,
+                            enabled = !isBusy && isRoomAudioReady,
                             modifier = Modifier.fillMaxWidth(),
                             testTag = "multiplayer_ready_button",
-                            enabled = isRoomAudioReady,
                             containerColor = if (readyNow) RockAccentGreen else RockAccentGold,
                             contentColor = Color.Black
                         )
