@@ -3134,6 +3134,36 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
     }
 
+    /**
+     * Revalida a presença online ao retornar de outro aplicativo.
+     * Uma pausa do Android não deve ser confundida com saída voluntária da sala.
+     */
+    fun onAppForegrounded() {
+        refreshGamepadConnection()
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            val heartbeat = repo.sendHeartbeat(room.roomCode, ParticipantConnectionState.ONLINE)
+            if (heartbeat.isSuccess) {
+                if (roomObserveJob?.isActive != true || participantsObserveJob?.isActive != true) {
+                    startObservingMultiplayerRoom(room.roomCode)
+                }
+                val warning = _multiplayerConnectionWarning.value.orEmpty()
+                if (warning.contains("Falha de rede") ||
+                    warning.contains("Conexão com a sala") ||
+                    warning.contains("Erro ao sincronizar participantes")
+                ) {
+                    _multiplayerConnectionWarning.value = null
+                }
+                refreshMultiplayerPeerHealth()
+            } else {
+                // O heartbeat pode falhar se o Android suspendeu a conexão de rede.
+                // Reentrar com o mesmo usuário recupera o documento sem criar outro jogador.
+                reconnectMultiplayerRoom()
+            }
+        }
+    }
+
     fun reconnectMultiplayerRoom() {
         val room = _multiplayerRoom.value
         val repo = multiplayerRepo ?: return
