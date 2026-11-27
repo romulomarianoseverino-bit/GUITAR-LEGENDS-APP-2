@@ -52,12 +52,17 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val tracks by viewModel.tracks.collectAsState()
     val selectedTrack by viewModel.selectedTrackFlow.collectAsState()
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
+    val friendRequests by viewModel.friendRequests.collectAsState()
+    val roomInvites by viewModel.roomInvites.collectAsState()
+    val friendPresence by viewModel.friendPresence.collectAsState()
+    val friendsMessage by viewModel.friendsMessage.collectAsState()
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
     var joinCodeInput by remember { mutableStateOf("") }
+    var friendNicknameInput by remember { mutableStateOf("") }
     var inviteCopiedNotice by remember { mutableStateOf(false) }
 
     val selfUid = viewModel.currentMultiplayerUid()
@@ -701,6 +706,24 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                 }
                             }
                         }
+                        FriendsPanel(
+                            isSignedIn = isSignedIn,
+                            currentUid = selfUid.orEmpty(),
+                            requests = friendRequests,
+                            invites = roomInvites,
+                            presence = friendPresence,
+                            message = friendsMessage,
+                            nicknameInput = friendNicknameInput,
+                            onNicknameChange = { friendNicknameInput = it },
+                            onSendRequest = { viewModel.sendFriendRequest(friendNicknameInput); friendNicknameInput = "" },
+                            onRespondRequest = viewModel::respondToFriendRequest,
+                            onRemoveFriend = viewModel::removeFriend,
+                            onBlockFriend = viewModel::blockFriend,
+                            onSendRoomInvite = viewModel::sendRoomInviteToFriend,
+                            onRespondInvite = viewModel::respondToFriendRoomInvite,
+                            onClearMessage = viewModel::clearFriendsMessage,
+                            canInvite = isHost
+                        )
                     } else {
                         // Prévia detalhada antes de criar ou entrar em uma sala
                         Column(
@@ -742,9 +765,125 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     )
                                 }
                             }
+                            FriendsPanel(
+                                isSignedIn = isSignedIn,
+                                currentUid = selfUid.orEmpty(),
+                                requests = friendRequests,
+                                invites = roomInvites,
+                                presence = friendPresence,
+                                message = friendsMessage,
+                                nicknameInput = friendNicknameInput,
+                                onNicknameChange = { friendNicknameInput = it },
+                                onSendRequest = { viewModel.sendFriendRequest(friendNicknameInput); friendNicknameInput = "" },
+                                onRespondRequest = viewModel::respondToFriendRequest,
+                                onRemoveFriend = viewModel::removeFriend,
+                                onBlockFriend = viewModel::blockFriend,
+                                onSendRoomInvite = viewModel::sendRoomInviteToFriend,
+                                onRespondInvite = viewModel::respondToFriendRoomInvite,
+                                onClearMessage = viewModel::clearFriendsMessage,
+                                canInvite = false
+                            )
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FriendsPanel(
+    isSignedIn: Boolean,
+    currentUid: String,
+    requests: List<FriendRequestCloud>,
+    invites: List<RoomInviteCloud>,
+    presence: Map<String, Boolean>,
+    message: String?,
+    nicknameInput: String,
+    onNicknameChange: (String) -> Unit,
+    onSendRequest: () -> Unit,
+    onRespondRequest: (String, Boolean) -> Unit,
+    onRemoveFriend: (String) -> Unit,
+    onBlockFriend: (String) -> Unit,
+    onSendRoomInvite: (String) -> Unit,
+    onRespondInvite: (String, Boolean) -> Unit,
+    onClearMessage: () -> Unit,
+    canInvite: Boolean
+) {
+    if (!isSignedIn) return
+    Surface(
+        color = Color(0x18FFFFFF),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 175.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("AMIGOS E CONVITES", color = RockAccentGold, fontWeight = FontWeight.Black, fontSize = 10.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = nicknameInput,
+                    onValueChange = onNicknameChange,
+                    modifier = Modifier.weight(1f).heightIn(min = 42.dp).testTag("friends_nickname_input"),
+                    singleLine = true,
+                    placeholder = { Text("Nickname do jogador", fontSize = 10.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = RockAccentCyan,
+                        unfocusedBorderColor = RockCardBorder
+                    )
+                )
+                Button(
+                    onClick = onSendRequest,
+                    enabled = nicknameInput.trim().length >= 3,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("friends_send_request_button")
+                ) { Text("ADICIONAR", fontSize = 9.sp, fontWeight = FontWeight.Black) }
+            }
+            if (!message.isNullOrBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, color = RockAccentCyan, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onClearMessage) { Text("OK", fontSize = 9.sp) }
+                }
+            }
+            invites.filter { it.status == "PENDING" }.forEach { invite ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Convite de ${invite.senderNickname} • Sala ${invite.roomCode}", color = Color.White, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onRespondInvite(invite.id, true) }) { Text("ACEITAR", color = RockAccentGreen, fontSize = 8.sp) }
+                    TextButton(onClick = { onRespondInvite(invite.id, false) }) { Text("RECUSAR", color = RockAccentRed, fontSize = 8.sp) }
+                }
+            }
+            requests.filter { it.status == "PENDING" && it.recipientUid == currentUid }.forEach { request ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Solicitação: ${request.senderNickname}", color = Color.White, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onRespondRequest(request.id, true) }) { Text("ACEITAR", color = RockAccentGreen, fontSize = 8.sp) }
+                    TextButton(onClick = { onRespondRequest(request.id, false) }) { Text("RECUSAR", color = RockAccentRed, fontSize = 8.sp) }
+                    TextButton(onClick = { onBlockFriend(request.senderUid) }) { Text("BLOQUEAR", color = RockAccentRed, fontSize = 8.sp) }
+                }
+            }
+            requests.filter { it.status == "ACCEPTED" }.forEach { request ->
+                val friendUid = if (request.senderUid == currentUid) request.recipientUid else request.senderUid
+                val friendName = if (request.senderUid == currentUid) request.recipientNickname else request.senderNickname
+                val online = presence[friendUid] == true
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${if (online) "● ONLINE" else "○ OFFLINE"} • ${friendName}",
+                        color = if (online) RockAccentGreen else Color.White.copy(alpha = 0.75f),
+                        fontSize = 9.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (canInvite && online) TextButton(onClick = { onSendRoomInvite(friendUid) }) {
+                        Text("CONVIDAR", color = RockAccentCyan, fontSize = 8.sp)
+                    }
+                    TextButton(onClick = { onRemoveFriend(friendUid) }) { Text("REMOVER", color = RockAccentGold, fontSize = 8.sp) }
+                    TextButton(onClick = { onBlockFriend(friendUid) }) { Text("BLOQUEAR", color = RockAccentRed, fontSize = 8.sp) }
+                }
+            }
+            requests.filter { it.status == "PENDING" && it.senderUid == currentUid }.forEach { request ->
+                Text("Solicitação enviada para ${request.recipientNickname}", color = Color.White.copy(alpha = 0.65f), fontSize = 8.sp)
             }
         }
     }
