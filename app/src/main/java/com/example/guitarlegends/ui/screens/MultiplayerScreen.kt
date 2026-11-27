@@ -57,6 +57,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val friendRequests by viewModel.friendRequests.collectAsState()
     val roomInvites by viewModel.roomInvites.collectAsState()
     val friendPresence by viewModel.friendPresence.collectAsState()
+    val allowFriendRoomInvites by viewModel.allowFriendRoomInvites.collectAsState()
     val friendsMessage by viewModel.friendsMessage.collectAsState()
 
     val context = LocalContext.current
@@ -714,6 +715,8 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                             requests = friendRequests,
                             invites = roomInvites,
                             presence = friendPresence,
+                            allowInvites = allowFriendRoomInvites,
+                            onAllowInvitesChange = viewModel::setAllowFriendRoomInvites,
                             message = friendsMessage,
                             nicknameInput = friendNicknameInput,
                             onNicknameChange = { friendNicknameInput = it },
@@ -773,6 +776,8 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                 requests = friendRequests,
                                 invites = roomInvites,
                                 presence = friendPresence,
+                                allowInvites = allowFriendRoomInvites,
+                                onAllowInvitesChange = viewModel::setAllowFriendRoomInvites,
                                 message = friendsMessage,
                                 nicknameInput = friendNicknameInput,
                                 onNicknameChange = { friendNicknameInput = it },
@@ -799,7 +804,9 @@ private fun FriendsPanel(
     currentUid: String,
     requests: List<FriendRequestCloud>,
     invites: List<RoomInviteCloud>,
-    presence: Map<String, Boolean>,
+    presence: Map<String, FriendPresenceCloud>,
+    allowInvites: Boolean,
+    onAllowInvitesChange: (Boolean) -> Unit,
     message: String?,
     nicknameInput: String,
     onNicknameChange: (String) -> Unit,
@@ -823,6 +830,14 @@ private fun FriendsPanel(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text("AMIGOS E CONVITES", color = RockAccentGold, fontWeight = FontWeight.Black, fontSize = 10.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Receber convites de amigos", color = Color.White, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = allowInvites,
+                    onCheckedChange = onAllowInvitesChange,
+                    modifier = Modifier.testTag("friends_allow_room_invites_switch")
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = nicknameInput,
@@ -869,7 +884,8 @@ private fun FriendsPanel(
             requests.filter { it.status == "ACCEPTED" }.forEach { request ->
                 val friendUid = if (request.senderUid == currentUid) request.recipientUid else request.senderUid
                 val friendName = if (request.senderUid == currentUid) request.recipientNickname else request.senderNickname
-                val online = presence[friendUid] == true
+                val friendState = presence[friendUid]
+                val online = friendState?.isOnline() == true
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "${if (online) "● ONLINE" else "○ OFFLINE"} • ${friendName}",
@@ -877,7 +893,7 @@ private fun FriendsPanel(
                         fontSize = 9.sp,
                         modifier = Modifier.weight(1f)
                     )
-                    if (canInvite && online) TextButton(onClick = { onSendRoomInvite(friendUid) }) {
+                    if (canInvite && online && friendState?.allowRoomInvites == true) TextButton(onClick = { onSendRoomInvite(friendUid) }) {
                         Text("CONVIDAR", color = RockAccentCyan, fontSize = 8.sp)
                     }
                     TextButton(onClick = { onRemoveFriend(friendUid) }) { Text("REMOVER", color = RockAccentGold, fontSize = 8.sp) }
