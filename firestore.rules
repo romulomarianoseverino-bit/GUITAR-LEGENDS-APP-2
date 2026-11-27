@@ -495,7 +495,7 @@ service cloud.firestore {
 
     match /friend_requests/{requestId} {
       allow get, list: if isSignedIn() &&
-        (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+        (resource == null || resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
       allow create: if isSignedIn() &&
         incoming().keys().hasAll([
           'senderUid', 'recipientUid', 'senderNickname', 'recipientNickname',
