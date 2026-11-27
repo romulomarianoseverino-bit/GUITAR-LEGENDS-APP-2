@@ -34,6 +34,7 @@ data class RoomInviteCloud(
 data class FriendPresenceCloud(
     val userId: String = "",
     val online: Boolean = false,
+    val allowRoomInvites: Boolean = true,
     val lastSeenAtMs: Long = 0L
 ) {
     fun isOnline(nowMs: Long = System.currentTimeMillis()): Boolean =
@@ -177,11 +178,16 @@ class FriendsCloudRepository(
         }
     }
 
-    suspend fun setPresence(online: Boolean): Result<Unit> {
+    suspend fun setPresence(online: Boolean, allowRoomInvites: Boolean = true): Result<Unit> {
         val uid = uidOrNull() ?: return Result.failure(IllegalStateException("Sessão encerrada."))
         return try {
             firestore.collection("user_presence").document(uid).set(
-                mapOf("userId" to uid, "online" to online, "lastSeenAtMs" to System.currentTimeMillis())
+                mapOf(
+                    "userId" to uid,
+                    "online" to online,
+                    "allowRoomInvites" to allowRoomInvites,
+                    "lastSeenAtMs" to System.currentTimeMillis()
+                )
             ).await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -189,14 +195,14 @@ class FriendsCloudRepository(
         }
     }
 
-    fun observePresence(userIds: List<String>): Flow<Map<String, Boolean>> = callbackFlow {
+    fun observePresence(userIds: List<String>): Flow<Map<String, FriendPresenceCloud>> = callbackFlow {
         val ids = userIds.distinct().filter { it.isNotBlank() && it != uidOrNull() }.take(10)
         if (ids.isEmpty()) {
             trySend(emptyMap())
             close()
             return@callbackFlow
         }
-        val states = mutableMapOf<String, Boolean>()
+        val states = mutableMapOf<String, FriendPresenceCloud>()
         val registrations = ids.map { friendUid ->
             firestore.collection("user_presence").document(friendUid).addSnapshotListener { snap, error ->
                 if (error != null) {
@@ -204,7 +210,7 @@ class FriendsCloudRepository(
                     return@addSnapshotListener
                 }
                 val presence = snap?.toObject(FriendPresenceCloud::class.java)?.copy(userId = friendUid)
-                states[friendUid] = presence?.isOnline() == true
+                if (presence != null) states[friendUid] = presence.copy(userId = friendUid) else states.remove(friendUid)
                 trySend(states.toMap())
             }
         }
@@ -222,6 +228,7 @@ class FriendsCloudRepository(
             val presence = firestore.collection("user_presence").document(friendUid).get().await()
                 .toObject(FriendPresenceCloud::class.java)
             if (presence?.isOnline() != true) throw IllegalStateException("Este amigo não está online no momento.")
+            if (!presence.allowRoomInvites) throw IllegalStateException("Este amigo desativou o recebimento de convites para salas.")
             val room = firestore.collection("multiplayer_rooms").document(roomCode).get().await()
             val members = room.get("memberUids") as? List<*> ?: emptyList<Any>()
             if (!room.exists() || uid !in members || room.getString("status") !in listOf("WAITING", "PLAYING")) {
