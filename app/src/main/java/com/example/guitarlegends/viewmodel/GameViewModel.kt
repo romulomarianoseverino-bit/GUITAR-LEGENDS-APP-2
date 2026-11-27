@@ -2543,6 +2543,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
         lastPreparedAudioTransferId = room.audioTransferId
         audioTransferJob?.cancel()
+        _pendingRoomAudioChoice.value?.file?.delete()
+        _pendingRoomAudioChoice.value = null
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
         audioTransferJob = viewModelScope.launch {
             _isRoomAudioTransferLoading.value = true
             _multiplayerError.value = null
@@ -2578,6 +2582,12 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 _isRoomAudioTransferLoading.value = false
             }
         }
+    }
+
+    fun retryRoomAudioTransfer() {
+        val room = _multiplayerRoom.value ?: return
+        lastPreparedAudioTransferId = ""
+        prepareRoomAudio(room)
     }
 
     fun useReceivedRoomAudioTemporarily() {
