@@ -2712,7 +2712,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         presenceHeartbeatJob = viewModelScope.launch {
             while (isActive) {
                 repo.setPresence(true, _allowFriendRoomInvites.value)
-                delay(25_000L)
+                delay(120_000L)
             }
         }
     }
