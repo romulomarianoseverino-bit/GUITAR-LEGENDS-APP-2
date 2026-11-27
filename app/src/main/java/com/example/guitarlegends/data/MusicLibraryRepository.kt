@@ -15,6 +15,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -45,19 +46,42 @@ class MusicLibraryRepository(private val context: Context) {
     suspend fun loadAllTracks(): List<Track> = withContext(Dispatchers.IO) {
         val importedTracks = loadImportedTracksFromManifest()
         val verifiedImported = mutableListOf<Track>()
+        val canonicalIdByHash = mutableMapOf<String, String>()
+        val duplicateIds = mutableMapOf<String, String>()
+        val duplicateFiles = mutableListOf<File>()
 
         for (track in importedTracks) {
             val uriStr = track.uriString
             if (!uriStr.isNullOrBlank()) {
                 val file = File(uriStr)
                 if (file.exists() && file.length() > 0L) {
-                    verifiedImported.add(track)
+                    val digest = sha256(file)
+                    val canonicalId = canonicalIdByHash[digest]
+                    if (canonicalId == null) {
+                        canonicalIdByHash[digest] = track.id
+                        verifiedImported.add(track)
+                    } else {
+                        duplicateIds[track.id] = canonicalId
+                        duplicateFiles.add(file)
+                    }
                 }
             }
         }
 
         if (verifiedImported.size != importedTracks.size) {
             saveManifest(verifiedImported)
+        }
+        if (duplicateIds.isNotEmpty()) {
+            val remappedPlaylists = loadPlaylistsInternal().map { playlist ->
+                playlist.copy(
+                    trackIds = playlist.trackIds.map { duplicateIds[it] ?: it }.distinct(),
+                    updatedAtMs = System.currentTimeMillis()
+                )
+            }
+            savePlaylistsInternal(remappedPlaylists)
+            duplicateFiles.forEach { file ->
+                if (file.parentFile == storageDir) runCatching { file.delete() }
+            }
         }
 
         AudioAnalyzer.BUILT_IN_TRACKS + verifiedImported
@@ -84,6 +108,19 @@ class MusicLibraryRepository(private val context: Context) {
                     IllegalArgumentException("Tipo MIME '$mimeType' incompatível com arquivo de áudio musical.")
                 )
             }
+
+            // Impede importar novamente o mesmo arquivo binário, mesmo com outro nome.
+            val incomingDigest = context.contentResolver.openInputStream(uri)?.use(::sha256)
+                ?: return@withContext Result.failure(Exception("Não foi possível ler o áudio para verificar duplicidade."))
+            val duplicate = loadImportedTracksFromManifest().firstOrNull { existing ->
+                val existingPath = existing.uriString
+                if (existingPath.isNullOrBlank()) false
+                else {
+                    val existingFile = File(existingPath)
+                    existingFile.exists() && existingFile.length() > 0L && sha256(existingFile) == incomingDigest
+                }
+            }
+            if (duplicate != null) return@withContext Result.success(duplicate)
 
             val uniqueId = "track_user_${UUID.randomUUID().toString().take(8)}"
             val sanitizedName = originalName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
@@ -313,6 +350,20 @@ class MusicLibraryRepository(private val context: Context) {
             runCatching { tempFile.delete() }
             Result.failure(Exception("Falha ao salvar playlists: ${e.message}"))
         }
+    }
+
+    private fun sha256(file: File): String =
+        file.inputStream().use(::sha256)
+
+    private fun sha256(input: java.io.InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (count > 0) digest.update(buffer, 0, count)
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
     }
 
     private fun isAllowedMimeType(mime: String): Boolean {
