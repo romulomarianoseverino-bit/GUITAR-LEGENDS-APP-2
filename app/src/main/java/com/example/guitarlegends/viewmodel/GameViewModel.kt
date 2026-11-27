@@ -165,8 +165,18 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     private val _disconnectedPeerNicknames = MutableStateFlow<List<String>>(emptyList())
     val disconnectedPeerNicknames: StateFlow<List<String>> = _disconnectedPeerNicknames.asStateFlow()
 
+    private val _strikeEvents = MutableStateFlow<List<StrikeEventCloud>>(emptyList())
+    val strikeEvents: StateFlow<List<StrikeEventCloud>> = _strikeEvents.asStateFlow()
+    private val _incomingStrike = MutableStateFlow<StrikeEventCloud?>(null)
+    val incomingStrike: StateFlow<StrikeEventCloud?> = _incomingStrike.asStateFlow()
+    private val _activeStrikePower = MutableStateFlow<String?>(null)
+    val activeStrikePower: StateFlow<String?> = _activeStrikePower.asStateFlow()
+    private var activeStrikeUntilMs = 0L
+    private var lastStrikeSentAtMs = 0L
+
     private var roomObserveJob: Job? = null
     private var participantsObserveJob: Job? = null
+    private var strikesObserveJob: Job? = null
     private var heartbeatJob: Job? = null
     private var hasAutoStartedRoomMatch: Boolean = false
 
@@ -1673,8 +1683,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         isCompetitiveMatch = competitive
     }
 
-    fun isStrikeEnabledForCurrentMatch(): Boolean =
-        _multiplayerRoom.value?.strikeEnabled ?: _localStrikeEnabled.value
+    fun isStrikeEnabledForCurrentMatch(): Boolean {
+        val room = _multiplayerRoom.value ?: return _localStrikeEnabled.value
+        val participants = _multiplayerParticipants.value
+        return room.strikeEnabled && participants.size >= 2 && participants.all { it.strikeConsent }
+    }
 
     fun setLocalMultiplayerMatch(active: Boolean) {
         _isLocalMultiplayerMatch.value = active
@@ -1931,6 +1944,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     }
 
                     val nowWallMs = System.currentTimeMillis()
+                    if (_activeStrikePower.value != null && nowWallMs >= activeStrikeUntilMs) {
+                        _activeStrikePower.value = null
+                        activeStrikeUntilMs = 0L
+                    }
                     if (_activePickFlashes.value.isNotEmpty()) {
                         val pruned = _activePickFlashes.value.filterValues { (nowWallMs - it) <= 260L }
                         if (pruned.size != _activePickFlashes.value.size) {
@@ -1996,7 +2013,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     private fun checkMissedNotes(currentPosMs: Long) {
-        val window = adaptiveEngine.getEffectiveHitWindowMs()
+        val baseWindow = adaptiveEngine.getEffectiveHitWindowMs()
+        val window = if (_activeStrikePower.value == "FOG") (baseWindow * 0.65f).toLong() else baseWindow
         val notes = _activeNotes.value
 
         for (note in notes) {
@@ -2056,14 +2074,18 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
     private fun attemptHit(lane: Int) {
         val currentPos = _currentSongTimeMs.value
-        val effectiveWindow = adaptiveEngine.getEffectiveHitWindowMs()
+        val baseWindow = adaptiveEngine.getEffectiveHitWindowMs()
+        val effectiveWindow = if (_activeStrikePower.value == "FOG") (baseWindow * 0.65f).toLong() else baseWindow
+        val mappedLane = if (_activeStrikePower.value == "LANE_INVERSION") {
+            (selectedDifficulty.lanesUsed - 1 - lane).coerceAtLeast(0)
+        } else lane
         val notes = _activeNotes.value
 
         var closestNote: Note? = null
         var minDiff = Long.MAX_VALUE
 
         for (note in notes) {
-            if (!note.isHit && !note.isMissed && note.lane == lane) {
+            if (!note.isHit && !note.isMissed && note.lane == mappedLane) {
                 val diff = abs(note.timeMs - currentPos)
                 if (diff <= effectiveWindow && diff < minDiff) {
                     minDiff = diff
@@ -2087,7 +2109,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 minDiff <= (effectiveWindow * 0.70).toLong() -> HitRating.GREAT
                 else -> HitRating.GOOD
             }
-            onHit(lane, rating, closestNote.isStarPower, minDiff)
+            onHit(mappedLane, rating, closestNote.isStarPower, minDiff)
         } else {
             onMiss(lane)
         }
@@ -2443,6 +2465,95 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
     }
 
+    fun setMultiplayerStrikeConsent(consent: Boolean) {
+        val room = _multiplayerRoom.value ?: return
+        if (room.statusEnum != RoomStatus.WAITING) {
+            _multiplayerError.value = "O consentimento do Strike só pode ser alterado antes da partida."
+            return
+        }
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            repo.updateParticipantStrikeConsent(room.roomCode, consent).onFailure { err ->
+                _multiplayerError.value = err.message ?: "Não foi possível atualizar seu consentimento para Strike."
+            }
+        }
+    }
+
+    fun sendStrike(targetUid: String, power: String) {
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        if (!isStrikeEnabledForCurrentMatch()) {
+            _multiplayerError.value = "Strike só funciona quando todos os jogadores concordam."
+            return
+        }
+        if (room.statusEnum != RoomStatus.PLAYING) {
+            _multiplayerError.value = "Os ataques Strike só podem ser usados durante a partida."
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastStrikeSentAtMs < 5_000L) {
+            _multiplayerError.value = "Aguarde alguns segundos antes de usar outro Strike."
+            return
+        }
+        lastStrikeSentAtMs = now
+        viewModelScope.launch {
+            repo.sendStrike(room.roomCode, targetUid, power).onFailure { err ->
+                _multiplayerError.value = err.message ?: "Não foi possível enviar o ataque Strike."
+            }
+        }
+    }
+
+    fun defendStrike(strikeId: String) {
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            repo.defendStrike(room.roomCode, strikeId).onSuccess {
+                if (_incomingStrike.value?.id == strikeId) _incomingStrike.value = null
+            }.onFailure { err ->
+                _multiplayerError.value = err.message ?: "Não foi possível defender o ataque Strike."
+            }
+        }
+    }
+
+    private fun observeStrikeEvents(roomCode: String) {
+        val repo = multiplayerRepo ?: return
+        strikesObserveJob?.cancel()
+        strikesObserveJob = viewModelScope.launch {
+            val handledIds = mutableSetOf<String>()
+            try {
+                repo.observeStrikes(roomCode).collect { events ->
+                    _strikeEvents.value = events
+                    val uid = repo.currentUidOrNull()
+                    val pending = events.filter { it.targetUid == uid && it.status == "PENDING" }
+                    _incomingStrike.value = pending.firstOrNull { it.createdAtMs + 2_500L > System.currentTimeMillis() }
+                    for (event in pending) {
+                        if (handledIds.add(event.id)) {
+                            launch {
+                                val waitMs = (event.createdAtMs + 2_500L - System.currentTimeMillis()).coerceAtLeast(0L)
+                                delay(waitMs)
+                                val latest = _strikeEvents.value.firstOrNull { it.id == event.id }
+                                if (latest?.status == "PENDING") {
+                                    if (_incomingStrike.value?.id == event.id) _incomingStrike.value = null
+                                    _activeStrikePower.value = event.power
+                                    activeStrikeUntilMs = System.currentTimeMillis() + 5_000L
+                                }
+                            }
+                        }
+                    }
+                    if (_incomingStrike.value != null &&
+                        pending.none { it.id == _incomingStrike.value?.id }
+                    ) {
+                        _incomingStrike.value = null
+                    }
+                }
+            } catch (e: Exception) {
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    _multiplayerConnectionWarning.value = "Falha ao sincronizar o Sistema de Strike."
+                }
+            }
+        }
+    }
+
     fun setMultiplayerStrikeEnabled(enabled: Boolean) {
         val room = _multiplayerRoom.value
         if (room == null) {
@@ -2460,6 +2571,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
         _localStrikeEnabled.value = enabled
         viewModelScope.launch {
+            multiplayerRepo.updateParticipantStrikeConsent(room.roomCode, enabled).onFailure { err ->
+                _multiplayerError.value = err.message ?: "Falha ao registrar o consentimento do anfitrião."
+                return@launch
+            }
             multiplayerRepo.updateRoomHostConfig(
                 roomCode = room.roomCode,
                 mode = _multiplayerMode.value,
@@ -2715,6 +2830,12 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         roomObserveJob = null
         participantsObserveJob?.cancel()
         participantsObserveJob = null
+        strikesObserveJob?.cancel()
+        strikesObserveJob = null
+        _strikeEvents.value = emptyList()
+        _incomingStrike.value = null
+        _activeStrikePower.value = null
+        activeStrikeUntilMs = 0L
         heartbeatJob?.cancel()
         heartbeatJob = null
     }
@@ -2788,6 +2909,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 }
             }
         }
+
+        observeStrikeEvents(roomCode)
 
         heartbeatJob = viewModelScope.launch {
             var consecutiveFailures = 0
