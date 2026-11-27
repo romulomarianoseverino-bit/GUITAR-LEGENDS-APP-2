@@ -281,6 +281,8 @@ service cloud.firestore {
              data.winnerUid is string && data.winnerUid.size() <= 128 &&
              (!('inviteMessage' in data) || (data.inviteMessage is string && data.inviteMessage.size() <= 160)) &&
              (!('strikeEnabled' in data) || data.strikeEnabled is bool) &&
+             (!('audioTransferId' in data) || (data.audioTransferId is string && data.audioTransferId.size() <= 64)) &&
+             (!('trackFingerprint' in data) || (data.trackFingerprint is string && (data.trackFingerprint == '' || data.trackFingerprint.size() == 64))) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -320,7 +322,7 @@ service cloud.firestore {
                        incoming().keys().hasOnly([
                          'roomCode', 'hostUid', 'hostNickname', 'mode', 'status',
                          'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
-                         'winnerUid', 'inviteMessage', 'strikeEnabled', 'createdAt', 'updatedAt'
+                         'winnerUid', 'inviteMessage', 'strikeEnabled', 'audioTransferId', 'trackFingerprint', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidMultiplayerRoom(incoming(), roomCode);
 
@@ -336,11 +338,16 @@ service cloud.firestore {
                            incoming().hostUid == existing().hostUid &&
                            existing().hostUid == request.auth.uid &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
-                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'strikeEnabled', 'updatedAt'
+                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'strikeEnabled', 'audioTransferId', 'trackFingerprint', 'updatedAt'
                            ]) &&
                            (
-                             !('strikeEnabled' in incoming().diff(existing()).affectedKeys()) ||
-                             (existing().status == 'WAITING' && incoming().status == 'WAITING')
+                             (!('strikeEnabled' in incoming().diff(existing()).affectedKeys()) ||
+                               (existing().status == 'WAITING' && incoming().status == 'WAITING')) &&
+                             (
+                               (!('audioTransferId' in incoming().diff(existing()).affectedKeys()) &&
+                                !('trackFingerprint' in incoming().diff(existing()).affectedKeys())) ||
+                               (existing().status == 'WAITING' && incoming().status == 'WAITING')
+                             )
                            )
                          ) ||
                          // Ação 2: Convidado entra na sala em espera respeitando limite
@@ -377,6 +384,79 @@ service cloud.firestore {
                        );
 
       allow delete: if isSignedIn() && isValidRoomCode(roomCode) && existing().hostUid == request.auth.uid;
+
+      match /audio_transfers/{transferId} {
+        function roomExists() {
+          return exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode));
+        }
+        function isRoomMember() {
+          return isSignedIn() && roomExists() &&
+            request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids;
+        }
+        function isRoomHost() {
+          return isSignedIn() && roomExists() &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.hostUid == request.auth.uid;
+        }
+
+        allow get, list: if isRoomMember();
+        allow create: if isRoomHost() &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'WAITING' &&
+          incoming().keys().hasAll([
+            'roomCode', 'ownerUid', 'sourceTrackId', 'title', 'artist', 'fileName',
+            'mimeType', 'sizeBytes', 'sha256', 'chunkCount', 'status', 'createdAtMs', 'updatedAtMs'
+          ]) &&
+          incoming().keys().hasOnly([
+            'roomCode', 'ownerUid', 'sourceTrackId', 'title', 'artist', 'fileName',
+            'mimeType', 'sizeBytes', 'sha256', 'chunkCount', 'status', 'createdAtMs', 'updatedAtMs'
+          ]) &&
+          incoming().roomCode == roomCode &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().sourceTrackId is string && incoming().sourceTrackId.size() <= 128 &&
+          incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 160 &&
+          incoming().artist is string && incoming().artist.size() <= 120 &&
+          incoming().fileName is string && incoming().fileName.size() >= 1 && incoming().fileName.size() <= 100 &&
+          incoming().mimeType is string && incoming().mimeType.size() <= 80 &&
+          incoming().sizeBytes is int && incoming().sizeBytes >= 1 && incoming().sizeBytes <= 8388608 &&
+          incoming().sha256 is string && incoming().sha256.size() == 64 &&
+          incoming().chunkCount is int && incoming().chunkCount >= 1 && incoming().chunkCount <= 16 &&
+          incoming().status == 'UPLOADING' &&
+          incoming().createdAtMs is int && incoming().updatedAtMs is int;
+
+        allow update: if isRoomHost() &&
+          existing().ownerUid == request.auth.uid &&
+          existing().status == 'UPLOADING' &&
+          incoming().roomCode == existing().roomCode &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().sourceTrackId == existing().sourceTrackId &&
+          incoming().title == existing().title &&
+          incoming().artist == existing().artist &&
+          incoming().fileName == existing().fileName &&
+          incoming().mimeType == existing().mimeType &&
+          incoming().sizeBytes == existing().sizeBytes &&
+          incoming().sha256 == existing().sha256 &&
+          incoming().chunkCount == existing().chunkCount &&
+          incoming().status in ['READY', 'ERROR'] &&
+          incoming().updatedAtMs is int &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAtMs']);
+
+        allow delete: if isRoomHost() &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status in ['FINISHED', 'CLOSED'];
+
+        match /chunks/{chunkId} {
+          allow get, list: if isRoomMember();
+          allow create: if isRoomHost() &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/audio_transfers/$(transferId)).data.status == 'UPLOADING' &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/audio_transfers/$(transferId)).data.ownerUid == request.auth.uid &&
+            incoming().keys().hasAll(['index', 'data', 'byteCount']) &&
+            incoming().keys().hasOnly(['index', 'data', 'byteCount']) &&
+            incoming().index is int && incoming().index >= 0 && incoming().index < 16 &&
+            incoming().data is string && incoming().data.size() <= 700000 &&
+            incoming().byteCount is int && incoming().byteCount >= 1 && incoming().byteCount <= 524288;
+          allow update: if false;
+          allow delete: if isRoomHost() &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status in ['FINISHED', 'CLOSED'];
+        }
+      }
 
       match /participants/{participantUid} {
         allow get, list: if isSignedIn() &&
