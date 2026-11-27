@@ -161,7 +161,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "SISTEMA DE STRIKE (STAR POWER)",
+                                        text = "SISTEMA DE STRIKE",
                                         color = RockAccentCyan,
                                         fontWeight = FontWeight.Black,
                                         fontSize = 9.sp
