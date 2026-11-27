@@ -242,15 +242,15 @@ class App2UpdatesAndFixesTest {
     }
 
     @Test
-    fun `05 - multiplayer dual simultaneous highways and Strike System lock & Star Power gating`() {
+    fun `05 - Star Power remains independent when Strike is disabled`() {
         val vm = GameViewModel(app)
         vm.setLocalMultiplayerMatch(true)
         vm.setMultiplayerStrikeEnabled(false)
         setVmStateFlow(vm, "_starPowerEnergy", 0.9f)
 
-        // Sem Strike bloqueia Star Power
+        // Star Power continua funcionando mesmo sem Strike.
         vm.activateStarPower()
-        assertFalse(vm.isStarPowerActive.value)
+        assertTrue(vm.isStarPowerActive.value)
         assertFalse(vm.isStrikeEnabledForCurrentMatch())
 
         composeTestRule.setContent {
@@ -264,7 +264,7 @@ class App2UpdatesAndFixesTest {
         composeTestRule.onNodeWithTag("left_player_hud").assertIsDisplayed()
         composeTestRule.onNodeWithTag("right_player_hud").assertIsDisplayed()
         composeTestRule.onNodeWithTag("strike_disabled_badge").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("star_power_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("star_power_button").assertIsDisplayed()
     }
 
     @Test
