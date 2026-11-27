@@ -31,8 +31,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.File
 import java.util.UUID
 import kotlin.math.abs
+
+data class PendingRoomAudioChoice(
+    val transfer: MultiplayerAudioTransferCloud,
+    val file: File
+)
 
 sealed class GameScreen {
     object Splash : GameScreen()
@@ -104,6 +110,12 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) FriendsCloudRepository(db, auth) else null
+    }
+
+    private val audioTransferRepo: MultiplayerAudioTransferRepository? = run {
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
+        val auth = firebaseAuth
+        if (db != null && auth != null) MultiplayerAudioTransferRepository(context, db, auth) else null
     }
 
     // Navegação
@@ -197,6 +209,15 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     val friendPresence: StateFlow<Map<String, FriendPresenceCloud>> = _friendPresence.asStateFlow()
     private val _friendsMessage = MutableStateFlow<String?>(null)
     val friendsMessage: StateFlow<String?> = _friendsMessage.asStateFlow()
+    private val _pendingRoomAudioChoice = MutableStateFlow<PendingRoomAudioChoice?>(null)
+    val pendingRoomAudioChoice: StateFlow<PendingRoomAudioChoice?> = _pendingRoomAudioChoice.asStateFlow()
+    private val _isRoomAudioReady = MutableStateFlow(true)
+    val isRoomAudioReady: StateFlow<Boolean> = _isRoomAudioReady.asStateFlow()
+    private val _isRoomAudioTransferLoading = MutableStateFlow(false)
+    val isRoomAudioTransferLoading: StateFlow<Boolean> = _isRoomAudioTransferLoading.asStateFlow()
+    private var audioTransferJob: Job? = null
+    private var lastPreparedAudioTransferId: String = ""
+    private var temporaryRoomAudioFile: File? = null
     private var friendsObserveJob: Job? = null
     private var roomInvitesObserveJob: Job? = null
     private var friendPresenceObserveJob: Job? = null
