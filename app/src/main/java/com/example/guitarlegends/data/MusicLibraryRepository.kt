@@ -1,7 +1,12 @@
 package com.example.guitarlegends.data
 
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import com.example.guitarlegends.analysis.AudioAnalyzer
 import com.example.guitarlegends.analysis.PcmAudioAnalyzer
@@ -48,43 +53,67 @@ class MusicLibraryRepository(private val context: Context) {
         val verifiedImported = mutableListOf<Track>()
         val canonicalIdByHash = mutableMapOf<String, String>()
         val duplicateIds = mutableMapOf<String, String>()
-        val duplicateFiles = mutableListOf<File>()
+        val duplicateUris = mutableListOf<String>()
+        val legacyFilesToDelete = mutableListOf<File>()
+        var manifestChanged = false
 
         for (track in importedTracks) {
-            val uriStr = track.uriString
-            if (!uriStr.isNullOrBlank()) {
-                val file = File(uriStr)
-                if (file.exists() && file.length() > 0L) {
-                    val digest = sha256(file)
-                    val canonicalId = canonicalIdByHash[digest]
-                    if (canonicalId == null) {
-                        canonicalIdByHash[digest] = track.id
-                        verifiedImported.add(track)
-                    } else {
-                        duplicateIds[track.id] = canonicalId
-                        duplicateFiles.add(file)
+            val uriStr = track.uriString ?: continue
+            if (!trackExists(uriStr)) {
+                manifestChanged = true
+                continue
+            }
+
+            var stableTrack = track
+            // Migra faixas antigas do armazenamento privado para Music/Guitar Legends,
+            // preservando o manifesto e as playlists antes de remover a cópia antiga.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && uriStr.startsWith("/")) {
+                val legacyFile = File(uriStr)
+                if (legacyFile.exists() && legacyFile.parentFile == storageDir) {
+                    val sharedUri = runCatching {
+                        persistToSharedMusic(legacyFile, legacyFile.name, track.mimeType)
+                    }.getOrNull()
+                    if (!sharedUri.isNullOrBlank() && sharedUri.startsWith("content://")) {
+                        stableTrack = track.copy(uriString = sharedUri)
+                        legacyFilesToDelete.add(legacyFile)
+                        manifestChanged = true
                     }
                 }
             }
+
+            val digest = sha256Track(stableTrack.uriString) ?: continue
+            val canonicalId = canonicalIdByHash[digest]
+            if (canonicalId == null) {
+                canonicalIdByHash[digest] = stableTrack.id
+                verifiedImported.add(stableTrack)
+                if (stableTrack != track) manifestChanged = true
+            } else {
+                duplicateIds[track.id] = canonicalId
+                stableTrack.uriString?.let(duplicateUris::add)
+                manifestChanged = true
+            }
         }
 
-        val manifestSaved = if (verifiedImported.size != importedTracks.size) {
-            saveManifest(verifiedImported)
-        } else Result.success(Unit)
+        val discoveredTracks = discoverSharedTracks(canonicalIdByHash.keys.toMutableSet())
+        if (discoveredTracks.isNotEmpty()) {
+            verifiedImported.addAll(discoveredTracks)
+            manifestChanged = true
+        }
 
-        if (duplicateIds.isNotEmpty() && manifestSaved.isSuccess) {
-            val remappedPlaylists = loadPlaylistsInternal().map { playlist ->
-                playlist.copy(
-                    trackIds = playlist.trackIds.map { duplicateIds[it] ?: it }.distinct(),
-                    updatedAtMs = System.currentTimeMillis()
-                )
-            }
-            val playlistsSaved = savePlaylistsInternal(remappedPlaylists)
-            if (playlistsSaved.isSuccess) {
-                duplicateFiles.forEach { file ->
-                    if (file.parentFile == storageDir) runCatching { file.delete() }
+        val manifestSaved = if (manifestChanged) saveManifest(verifiedImported) else Result.success(Unit)
+        if (manifestSaved.isSuccess) {
+            if (duplicateIds.isNotEmpty()) {
+                val remappedPlaylists = loadPlaylistsInternal().map { playlist ->
+                    playlist.copy(
+                        trackIds = playlist.trackIds.map { duplicateIds[it] ?: it }.distinct(),
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                }
+                if (savePlaylistsInternal(remappedPlaylists).isSuccess) {
+                    duplicateUris.forEach(::deleteStoredUri)
                 }
             }
+            legacyFilesToDelete.forEach { file -> runCatching { file.delete() } }
         }
 
         AudioAnalyzer.BUILT_IN_TRACKS + verifiedImported
