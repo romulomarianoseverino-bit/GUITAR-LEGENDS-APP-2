@@ -8,7 +8,6 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
-import java.security.MessageDigest
 
 data class FriendRequestCloud(
     @DocumentId val id: String = "",
@@ -51,11 +50,8 @@ class FriendsCloudRepository(
 ) {
     private fun uidOrNull(): String? = auth.currentUser?.uid
 
-    private fun pairId(a: String, b: String): String {
-        val raw = listOf(a, b).sorted().joinToString("|")
-        val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
-        return hash.joinToString("") { "%02x".format(it) }
-    }
+    private fun pairId(a: String, b: String): String =
+        listOf(a, b).sorted().joinToString("__")
 
     suspend fun sendFriendRequest(nickname: String): Result<Unit> {
         val uid = uidOrNull() ?: return Result.failure(IllegalStateException("Entre na sua conta para adicionar amigos."))
