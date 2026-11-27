@@ -403,6 +403,30 @@ class MultiplayerCloudRepository(
         }
     }
 
+    suspend fun markStrikeApplied(roomCode: String, strikeId: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        if (strikeId.isBlank() || strikeId.length > 128) {
+            return Result.failure(IllegalArgumentException("Ataque inválido."))
+        }
+        val path = "multiplayer_rooms/$normalized/strikes/$strikeId"
+        return try {
+            firestore.collection("multiplayer_rooms").document(normalized)
+                .collection("strikes").document(strikeId)
+                .update(
+                    mapOf(
+                        "status" to "APPLIED",
+                        "resolvedAtMs" to System.currentTimeMillis()
+                    )
+                ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
     suspend fun defendStrike(roomCode: String, strikeId: String): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
