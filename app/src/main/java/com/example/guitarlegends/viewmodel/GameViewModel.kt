@@ -3022,7 +3022,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 _multiplayerMode.value = room.modeEnum
                 _localStrikeEnabled.value = room.strikeEnabled
                 setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                prepareRoomAudio(room)
                 startObservingMultiplayerRoom(room.roomCode)
             }.onFailure { err ->
                 _multiplayerError.value = err.message ?: "Não foi possível entrar na sala."
