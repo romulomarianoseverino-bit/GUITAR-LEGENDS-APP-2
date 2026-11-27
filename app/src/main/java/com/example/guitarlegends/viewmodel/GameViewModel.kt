@@ -3333,11 +3333,18 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         audioPlayer.stop()
         gameLoopJob?.cancel()
         previewProgressJob?.cancel()
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
+        _pendingRoomAudioChoice.value?.file?.delete()
+        _pendingRoomAudioChoice.value = null
     }
 
     override fun onCleared() {
         super.onCleared()
         stopRoomObserversOnly()
+        temporaryRoomAudioFile?.delete()
+        _pendingRoomAudioChoice.value?.file?.delete()
+        audioTransferJob?.cancel()
         audioPlayer.release()
         gamepadManager.release()
     }
