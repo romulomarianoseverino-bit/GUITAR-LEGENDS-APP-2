@@ -70,6 +70,9 @@ sealed class AuthUiState {
 
 class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) : AndroidViewModel(application) {
 
+    // AndroidViewModelFactory exige um construtor público que receba somente Application.
+    constructor(application: Application) : this(application, null)
+
     private val context: Context = application.applicationContext
     val audioPlayer = AudioPlayerEngine(context)
     val soundFx = SoundFxSynthesizer()
