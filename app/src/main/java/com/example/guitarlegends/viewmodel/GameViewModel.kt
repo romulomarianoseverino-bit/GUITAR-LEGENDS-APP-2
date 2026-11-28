@@ -3500,8 +3500,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             while (isActive && _multiplayerRoom.value?.roomCode == roomCode) {
                 val activeRoom = _multiplayerRoom.value
                 val selfUid = repo.currentUidOrNull()
-                val selfReady = _multiplayerParticipants.value.firstOrNull { it.userId == selfUid }?.ready == true
-                val shouldSendHeartbeat = appInForeground && activeRoom?.statusEnum != RoomStatus.PAUSED
+                val selfParticipant = _multiplayerParticipants.value.firstOrNull { it.userId == selfUid }
+                val selfReady = selfParticipant?.ready == true
+                val shouldSendHeartbeat = appInForeground &&
+                    (activeRoom?.statusEnum != RoomStatus.PAUSED ||
+                        selfParticipant?.connectionStateEnum == ParticipantConnectionState.ONLINE)
                 val res = if (shouldSendHeartbeat) {
                     repo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE)
                 } else {
