@@ -51,11 +51,13 @@ import com.example.guitarlegends.engine.drawHighway
 import com.example.guitarlegends.model.ControlMode
 import com.example.guitarlegends.model.Instrument
 import com.example.guitarlegends.model.MultiplayerMode
+import com.example.guitarlegends.model.RoomStatus
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.GameScreen
 import com.example.guitarlegends.viewmodel.GameViewModel
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -86,6 +88,24 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
     val isLocalMultiplayerMatch by viewModel.isLocalMultiplayerMatch.collectAsState()
     val mpMode by viewModel.multiplayerMode.collectAsState()
+    val collectivePauseSeconds by viewModel.collectivePauseSeconds.collectAsState()
+    val isCollectivePause = mpRoom?.statusEnum == RoomStatus.PAUSED
+    val reconnectPhrases = remember {
+        listOf(
+            "O show ainda não acabou. A próxima música espera por você!",
+            "Até as maiores bandas precisam de uma pausa entre os acordes.",
+            "Aumente o volume: estamos preparando a volta ao palco.",
+            "Uma lenda nunca abandona o palco. Estamos aguardando!",
+            "Segure o ritmo: a banda vai tocar junta novamente."
+        )
+    }
+    var reconnectPhraseIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(isCollectivePause) {
+        while (isCollectivePause) {
+            delay(4_500L)
+            reconnectPhraseIndex = (reconnectPhraseIndex + 1) % reconnectPhrases.size
+        }
+    }
 
     val track = viewModel.selectedTrack
     val difficulty = viewModel.selectedDifficulty
@@ -677,8 +697,84 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             }
         }
 
-        // Pause Menu Dialog Overlay (Ordem Exata: 1. Continuar, 2. Reiniciar música, 3. Controle de volume, 4. Próxima música, 5. Sair)
-        if (isPaused) {
+        // A pausa coletiva bloqueia a pista inteira e apresenta a espera animada de reconexão.
+        if (isCollectivePause) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xF20A0714), Color(0xF51B0D2E), Color(0xF2080710))
+                        )
+                    )
+                    .pointerInput(Unit) { detectTapGestures { /* bloqueia comandos durante a pausa coletiva */ } }
+                    .testTag("multiplayer_reconnect_overlay"),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth(0.82f)
+                        .widthIn(max = 520.dp)
+                        .testTag("multiplayer_reconnect_card"),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xF21A112B)),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(listOf(RockAccentCyan, RockAccentGold))
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "GUITAR LEGENDS",
+                            color = RockAccentGold,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 15.sp,
+                            letterSpacing = 2.sp
+                        )
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(54.dp).testTag("multiplayer_reconnect_loading"),
+                            color = RockAccentCyan,
+                            trackColor = Color.White.copy(alpha = 0.12f),
+                            strokeWidth = 5.dp
+                        )
+                        Text(
+                            text = "AGUARDANDO RECONEXÃO",
+                            color = Color.White,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 19.sp,
+                            letterSpacing = 0.7.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            text = "Jogador: ${mpRoom?.pausedByNickname?.ifBlank { "Participante" } ?: "Participante"}",
+                            color = RockAccentCyan,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.testTag("multiplayer_reconnect_player")
+                        )
+                        Text(
+                            text = String.format("%02d:%02d", collectivePauseSeconds / 60, collectivePauseSeconds % 60),
+                            color = RockAccentGold,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 34.sp,
+                            modifier = Modifier.testTag("multiplayer_reconnect_countdown")
+                        )
+                        Text(
+                            text = reconnectPhrases[reconnectPhraseIndex],
+                            color = Color.White.copy(alpha = 0.82f),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.testTag("multiplayer_reconnect_phrase")
+                        )
+                    }
+                }
+            }
+        } else if (isPaused) {
             val audio = stats.studioProfile.audioSettings
             Box(
                 modifier = Modifier
