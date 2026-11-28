@@ -98,6 +98,8 @@ data class MultiplayerParticipantCloud(
     val strikeConsent: Boolean = false,
     val lastHeartbeatMs: Long = 0L,
     @ServerTimestamp
+    val lastHeartbeatAt: Timestamp? = null,
+    @ServerTimestamp
     val joinedAt: Timestamp? = null,
     @ServerTimestamp
     val updatedAt: Timestamp? = null
@@ -117,7 +119,8 @@ data class MultiplayerParticipantCloud(
     fun isStale(nowMs: Long, thresholdMs: Long? = null): Boolean {
         if (connectionStateEnum == ParticipantConnectionState.DISCONNECTED) return true
         val allowedMs = thresholdMs ?: if (ready) 20_000L else 120_000L
-        return lastHeartbeatMs > 0L && (nowMs - lastHeartbeatMs) > allowedMs
+        val heartbeatTime = lastHeartbeatAt?.toDate()?.time ?: lastHeartbeatMs
+        return heartbeatTime > 0L && (nowMs - heartbeatTime) > allowedMs
     }
 
     fun toCreateMap(): Map<String, Any?> = mapOf(
@@ -134,6 +137,7 @@ data class MultiplayerParticipantCloud(
         "starPowerActive" to starPowerActive,
         "strikeConsent" to strikeConsent,
         "lastHeartbeatMs" to lastHeartbeatMs.coerceAtLeast(0L),
+        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
         "joinedAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )
