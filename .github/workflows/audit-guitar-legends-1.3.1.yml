@@ -138,6 +138,7 @@ jobs:
           emulator-boot-timeout: 1800
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data
           script: |
+            python3 - <<'PY'
             import os, subprocess, sys, time
             def run(args, check=True):
                 p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -185,6 +186,7 @@ jobs:
             if detected:
                 raise SystemExit("Falha/crash detectado no Android: " + ", ".join(detected))
             print(f"Processo ativo após 20 segundos: {pid}", flush=True)
+            PY
 
       - name: Publicar registros de execução do Android
         if: always() && steps.validate_apk.outcome == 'success'
