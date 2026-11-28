@@ -3213,7 +3213,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         val self = _multiplayerParticipants.value.firstOrNull { it.userId == uid }
         viewModelScope.launch {
             if (room.statusEnum == RoomStatus.PAUSED &&
-                (room.pausedByUid == uid || self?.connectionStateEnum == ParticipantConnectionState.DISCONNECTED)
+                (room.pausedByUid == uid ||
+                    self?.connectionStateEnum == ParticipantConnectionState.DISCONNECTED ||
+                    self?.isStale(System.currentTimeMillis()) == true)
             ) {
                 reconnectMultiplayerRoom()
                 return@launch
@@ -3298,8 +3300,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                         if (remainingMs <= 0L) {
                             val result = multiplayerRepo?.closeExpiredPausedRoom(room.roomCode)
                             if (result?.getOrDefault(false) == true) break
+                            delay(1_000L)
+                        } else {
+                            delay(250L)
                         }
-                        delay(250L)
                     }
                 }
             }
