@@ -203,6 +203,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     private var collectivePauseTimerJob: Job? = null
     private var appInForeground: Boolean = true
     private var wasCollectivelyPaused: Boolean = false
+    private var stalePauseRequestUid: String? = null
     private var hasAutoStartedRoomMatch: Boolean = false
 
     private val _friendRequests = MutableStateFlow<List<FriendRequestCloud>>(emptyList())
@@ -3356,13 +3357,37 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             .filter { it.userId != selfUid && it.isStale(nowMs) }
             .map { it.nickname.ifBlank { "Jogador" } }
         _disconnectedPeerNicknames.value = staleNames
+        val activeRoom = _multiplayerRoom.value
+        val staleParticipant = participants.firstOrNull { it.userId != selfUid && it.isStale(nowMs) }
+        if (activeRoom?.statusEnum == RoomStatus.PLAYING && staleParticipant != null &&
+            stalePauseRequestUid != staleParticipant.userId
+        ) {
+            stalePauseRequestUid = staleParticipant.userId
+            val repo = multiplayerRepo
+            if (repo != null) {
+                viewModelScope.launch {
+                    repo.pauseRoomForStaleParticipant(activeRoom.roomCode, staleParticipant.userId)
+                        .onFailure {
+                            // A regra do servidor pode rejeitar a tentativa se o heartbeat ainda não venceu.
+                            // O próximo ciclo de saúde tentará novamente.
+                        }
+                    if (_multiplayerRoom.value?.statusEnum != RoomStatus.PAUSED) {
+                        stalePauseRequestUid = null
+                    }
+                }
+            } else {
+                stalePauseRequestUid = null
+            }
+        } else if (activeRoom?.statusEnum != RoomStatus.PLAYING) {
+            stalePauseRequestUid = null
+        }
+
         if (staleNames.isNotEmpty()) {
             _multiplayerConnectionWarning.value =
                 "Conexão instável ou desconectado(s): ${staleNames.joinToString(", ")}"
         } else if (_multiplayerConnectionWarning.value
                 ?.startsWith("Conexão instável ou desconectado(s):") == true
         ) {
-            // Remove o aviso quando o heartbeat do participante voltar a chegar.
             _multiplayerConnectionWarning.value = null
         }
     }
