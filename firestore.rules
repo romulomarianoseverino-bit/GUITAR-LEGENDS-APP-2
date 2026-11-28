@@ -311,6 +311,7 @@ service cloud.firestore {
              data.starPowerActive is bool &&
              (!('strikeConsent' in data) || data.strikeConsent is bool) &&
              data.lastHeartbeatMs is int && data.lastHeartbeatMs >= 0 &&
+             (!('lastHeartbeatAt' in data) || (data.lastHeartbeatAt is timestamp && data.lastHeartbeatAt <= request.time)) &&
              data.joinedAt is timestamp && data.joinedAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -369,11 +370,18 @@ service cloud.firestore {
                            incoming().hostUid == existing().hostUid &&
                            request.auth.uid in existing().memberUids &&
                            incoming().memberUids == existing().memberUids &&
-                           incoming().pausedByUid == request.auth.uid &&
+                           incoming().pausedByUid in existing().memberUids &&
                            incoming().pauseStartedAt == request.time &&
                            incoming().pausedByNickname ==
-                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(request.auth.uid)).data.nickname &&
-                           getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(request.auth.uid)).data.connectionState == 'DISCONNECTED' &&
+                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(incoming().pausedByUid)).data.nickname &&
+                           (
+                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(incoming().pausedByUid)).data.connectionState == 'DISCONNECTED' ||
+                             (
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(incoming().pausedByUid)).data.ready == true &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(incoming().pausedByUid)).data.lastHeartbeatAt is timestamp &&
+                               request.time >= getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(incoming().pausedByUid)).data.lastHeartbeatAt + duration.value(20, 's')
+                             )
+                           ) &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
                              'status', 'pauseStartedAt', 'pausedByUid', 'pausedByNickname', 'updatedAt'
                            ])
@@ -389,6 +397,35 @@ service cloud.firestore {
                            !('pausedByUid' in incoming()) &&
                            !('pausedByNickname' in incoming()) &&
                            getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(request.auth.uid)).data.connectionState == 'ONLINE' &&
+                           (
+                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[0])).data.connectionState == 'ONLINE' &&
+                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[0])).data.lastHeartbeatAt is timestamp &&
+                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[0])).data.lastHeartbeatAt > request.time - duration.value(20, 's')
+                           ) &&
+                           (
+                             existing().memberUids.size() < 2 ||
+                             (
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[1])).data.connectionState == 'ONLINE' &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[1])).data.lastHeartbeatAt is timestamp &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[1])).data.lastHeartbeatAt > request.time - duration.value(20, 's')
+                             )
+                           ) &&
+                           (
+                             existing().memberUids.size() < 3 ||
+                             (
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[2])).data.connectionState == 'ONLINE' &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[2])).data.lastHeartbeatAt is timestamp &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[2])).data.lastHeartbeatAt > request.time - duration.value(20, 's')
+                             )
+                           ) &&
+                           (
+                             existing().memberUids.size() < 4 ||
+                             (
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[3])).data.connectionState == 'ONLINE' &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[3])).data.lastHeartbeatAt is timestamp &&
+                               getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(existing().memberUids[3])).data.lastHeartbeatAt > request.time - duration.value(20, 's')
+                             )
+                           ) &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
                              'status', 'pauseStartedAt', 'pausedByUid', 'pausedByNickname', 'updatedAt'
                            ])
@@ -533,12 +570,12 @@ service cloud.firestore {
                          incoming().keys().hasAll([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'lastHeartbeatMs', 'lastHeartbeatAt', 'joinedAt', 'updatedAt'
                          ]) &&
                          incoming().keys().hasOnly([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'lastHeartbeatAt', 'joinedAt', 'updatedAt'
                          ]) &&
                          isValidMultiplayerParticipant(incoming(), roomCode, participantUid);
 
@@ -553,7 +590,7 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'nickname', 'instrument', 'difficulty', 'ready',
                            'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'lastHeartbeatAt', 'updatedAt'
                          ]) &&
                          (!('strikeConsent' in incoming().diff(existing()).affectedKeys()) ||
                            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'WAITING');
