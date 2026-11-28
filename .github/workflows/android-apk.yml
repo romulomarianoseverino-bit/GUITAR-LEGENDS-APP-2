@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - baseline/guitar-legends-1.3-tested-2026-11-27
     paths:
       - "app/**"
       - "gradle/**"
@@ -44,7 +45,7 @@ jobs:
           gradle-version: "9.3.1"
 
       - name: Instalar Firebase CLI
-        run: npm install --global firebase-tools@13.35.1
+        run: npm install --global firebase-tools@15.37.0
 
       - name: Executar testes unitários com Auth e Firestore Emulator
         id: tests
@@ -116,12 +117,10 @@ jobs:
           echo "STORE_PASSWORD=$GH_SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
           echo "KEY_PASSWORD=$GH_SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
 
-      # A compilação é independente do resultado dos testes automatizados.
-      # Assim, uma falha isolada não impede a geração de um APK para validação humana.
-      # O job continuará marcado como falho se os testes falharem; nenhum erro será ocultado.
+      # Nunca gerar ou publicar candidato se os testes automatizados falharem.
       - name: Compilar APK candidato para teste humano
         id: build_apk
-        if: always() && steps.prepare_signing.outcome == 'success' && !cancelled()
+        if: steps.tests.outcome == 'success' && steps.prepare_signing.outcome == 'success' && !cancelled()
         run: |
           gradle --no-daemon clean assembleRelease
           mkdir -p app/build/outputs/apk/release
@@ -133,8 +132,43 @@ jobs:
             echo "Resultado dos testes automatizados: ${{ steps.tests.outcome }}"
           } > app/build/outputs/apk/release/BUILD-INFO.txt
 
-      - name: Publicar APK candidato para teste humano
-        if: always() && steps.build_apk.outcome == 'success'
+      - name: Validar assinatura, alinhamento e versão do APK
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
+          BADGING="$("$BUILD_TOOLS/aapt" dump badging "$APK" | head -n 1)"
+          echo "$BADGING"
+          echo "$BADGING" | grep -q "package: name='com.aistudio.applet.kpfcic'"
+          echo "$BADGING" | grep -q "versionCode='3'"
+          echo "$BADGING" | grep -q "versionName='1.3.1'"
+          sha256sum "$APK"
+
+      - name: Instalar e abrir APK no emulador Android 16
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim
+          script: |
+            set -euo pipefail
+            adb install app/build/outputs/apk/release/app-release.apk
+            adb shell monkey -p com.aistudio.applet.kpfcic 1
+            sleep 20
+            adb shell pidof com.aistudio.applet.kpfcic
+            if adb logcat -d -s AndroidRuntime:E | grep -q "FATAL EXCEPTION"; then
+              adb logcat -d -s AndroidRuntime:E
+              exit 1
+            fi
+
+      - name: Publicação do APK bloqueada até validação final em dispositivos
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: Guitar-Legends-APK-candidato-assinado-chave-permanente-nao-validado

@@ -26,8 +26,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.guitarlegends.data.FriendPresenceCloud
+import com.example.guitarlegends.data.FriendRequestCloud
 import com.example.guitarlegends.data.GoogleCredentialResult
 import com.example.guitarlegends.data.GoogleSignInHelper
+import com.example.guitarlegends.data.RoomInviteCloud
 import com.example.guitarlegends.model.*
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.AuthUiState
@@ -52,13 +55,21 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val tracks by viewModel.tracks.collectAsState()
     val selectedTrack by viewModel.selectedTrackFlow.collectAsState()
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
-    val effectiveStrikeEnabled = room?.strikeEnabled ?: localStrikeEnabled
+    val friendRequests by viewModel.friendRequests.collectAsState()
+    val roomInvites by viewModel.roomInvites.collectAsState()
+    val friendPresence by viewModel.friendPresence.collectAsState()
+    val allowFriendRoomInvites by viewModel.allowFriendRoomInvites.collectAsState()
+    val friendsMessage by viewModel.friendsMessage.collectAsState()
+    val pendingRoomAudioChoice by viewModel.pendingRoomAudioChoice.collectAsState()
+    val isRoomAudioTransferLoading by viewModel.isRoomAudioTransferLoading.collectAsState()
+    val isRoomAudioReady by viewModel.isRoomAudioReady.collectAsState()
 
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
     var joinCodeInput by remember { mutableStateOf("") }
+    var friendNicknameInput by remember { mutableStateOf("") }
     var inviteCopiedNotice by remember { mutableStateOf(false) }
 
     val selfUid = viewModel.currentMultiplayerUid()
@@ -66,6 +77,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
     val isHost = room != null && selfUid != null && room!!.hostUid == selfUid
     val canEditStrike = room == null || (isHost && room!!.statusEnum == RoomStatus.WAITING)
     val selfParticipant = participants.find { it.userId == selfUid }
+    val strikeRequested = room?.strikeEnabled ?: localStrikeEnabled
+    val allPlayersConsented = room == null || (participants.size >= 2 && participants.all { it.strikeConsent })
+    val effectiveStrikeEnabled = strikeRequested && allPlayersConsented
 
     Column(
         modifier = Modifier
@@ -161,7 +175,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "SISTEMA DE STRIKE (STAR POWER)",
+                                        text = "SISTEMA DE STRIKE",
                                         color = RockAccentCyan,
                                         fontWeight = FontWeight.Black,
                                         fontSize = 9.sp
@@ -192,9 +206,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                         onClick = { viewModel.setMultiplayerStrikeEnabled(true) },
                                         enabled = canEditStrike,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (effectiveStrikeEnabled) RockAccentCyan else Color(0x22FFFFFF),
-                                            contentColor = if (effectiveStrikeEnabled) Color.Black else Color.White,
-                                            disabledContainerColor = if (effectiveStrikeEnabled) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                            containerColor = if (strikeRequested) RockAccentCyan else Color(0x22FFFFFF),
+                                            contentColor = if (strikeRequested) Color.Black else Color.White,
+                                            disabledContainerColor = if (strikeRequested) RockAccentCyan.copy(alpha = 0.55f) else Color(0x14FFFFFF)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
@@ -204,7 +218,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             .testTag("multiplayer_strike_toggle_com")
                                     ) {
                                         Text(
-                                            text = if (effectiveStrikeEnabled) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
+                                            text = if (strikeRequested) "⚡ COM STRIKE ✔" else "⚡ COM STRIKE",
                                             fontWeight = FontWeight.Black,
                                             fontSize = 9.sp,
                                             maxLines = 1
@@ -215,9 +229,9 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                         onClick = { viewModel.setMultiplayerStrikeEnabled(false) },
                                         enabled = canEditStrike,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (!effectiveStrikeEnabled) RockAccentGold else Color(0x22FFFFFF),
-                                            contentColor = if (!effectiveStrikeEnabled) Color.Black else Color.White,
-                                            disabledContainerColor = if (!effectiveStrikeEnabled) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
+                                            containerColor = if (!strikeRequested) RockAccentGold else Color(0x22FFFFFF),
+                                            contentColor = if (!strikeRequested) Color.Black else Color.White,
+                                            disabledContainerColor = if (!strikeRequested) RockAccentGold.copy(alpha = 0.55f) else Color(0x14FFFFFF)
                                         ),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
@@ -227,12 +241,39 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             .testTag("multiplayer_strike_toggle_sem")
                                     ) {
                                         Text(
-                                            text = if (!effectiveStrikeEnabled) "SEM STRIKE ✔" else "SEM STRIKE",
+                                            text = if (!strikeRequested) "SEM STRIKE ✔" else "SEM STRIKE",
                                             fontWeight = FontWeight.Black,
                                             fontSize = 9.sp,
                                             maxLines = 1
                                         )
                                     }
+                                }
+
+                                if (room != null && !isHost && room!!.statusEnum == RoomStatus.WAITING) {
+                                    val consented = selfParticipant?.strikeConsent == true
+                                    Button(
+                                        onClick = { viewModel.setMultiplayerStrikeConsent(!consented) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (consented) RockAccentCyan else RockAccentGold,
+                                            contentColor = Color.Black
+                                        ),
+                                        modifier = Modifier.fillMaxWidth().testTag("multiplayer_strike_consent_toggle")
+                                    ) {
+                                        Text(
+                                            text = if (consented) "CONSENTIMENTO DE STRIKE: ACEITO" else "ACEITAR STRIKE",
+                                            fontWeight = FontWeight.Black,
+                                            fontSize = 9.sp
+                                        )
+                                    }
+                                }
+                                if (room != null && strikeRequested && !allPlayersConsented) {
+                                    Text(
+                                        text = "Aguardando consentimento de todos os jogadores. O Strike permanece desligado até todos aceitarem.",
+                                        color = RockAccentGold,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 9.sp
+                                    )
                                 }
                             }
                         }
@@ -477,7 +518,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                         RockButton(
                             text = if (readyNow) "ESTOU PRONTO ✔" else "CONFIRMAR PRONTO",
                             onClick = { viewModel.toggleMultiplayerReady() },
-                            enabled = !isBusy,
+                            enabled = !isBusy && isRoomAudioReady,
                             modifier = Modifier.fillMaxWidth(),
                             testTag = "multiplayer_ready_button",
                             containerColor = if (readyNow) RockAccentGreen else RockAccentGold,
@@ -524,6 +565,11 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     fontSize = 10.sp,
                                     modifier = Modifier.weight(1f)
                                 )
+                                if (!isRoomAudioReady && room?.audioTransferId?.isNotBlank() == true) {
+                                    TextButton(onClick = viewModel::retryRoomAudioTransfer) {
+                                        Text("TENTAR", color = RockAccentCyan, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                    }
+                                }
                                 TextButton(onClick = { viewModel.clearMultiplayerError() }) {
                                     Text("OK", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
                                 }
@@ -672,6 +718,26 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                 }
                             }
                         }
+                        FriendsPanel(
+                            isSignedIn = isSignedIn,
+                            currentUid = selfUid.orEmpty(),
+                            requests = friendRequests,
+                            invites = roomInvites,
+                            presence = friendPresence,
+                            allowInvites = allowFriendRoomInvites,
+                            onAllowInvitesChange = viewModel::setAllowFriendRoomInvites,
+                            message = friendsMessage,
+                            nicknameInput = friendNicknameInput,
+                            onNicknameChange = { friendNicknameInput = it },
+                            onSendRequest = { viewModel.sendFriendRequest(friendNicknameInput); friendNicknameInput = "" },
+                            onRespondRequest = viewModel::respondToFriendRequest,
+                            onRemoveFriend = viewModel::removeFriend,
+                            onBlockFriend = viewModel::blockFriend,
+                            onSendRoomInvite = viewModel::sendRoomInviteToFriend,
+                            onRespondInvite = viewModel::respondToFriendRoomInvite,
+                            onClearMessage = viewModel::clearFriendsMessage,
+                            canInvite = isHost
+                        )
                     } else {
                         // Prévia detalhada antes de criar ou entrar em uma sala
                         Column(
@@ -713,9 +779,170 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                     )
                                 }
                             }
+                            FriendsPanel(
+                                isSignedIn = isSignedIn,
+                                currentUid = selfUid.orEmpty(),
+                                requests = friendRequests,
+                                invites = roomInvites,
+                                presence = friendPresence,
+                                allowInvites = allowFriendRoomInvites,
+                                onAllowInvitesChange = viewModel::setAllowFriendRoomInvites,
+                                message = friendsMessage,
+                                nicknameInput = friendNicknameInput,
+                                onNicknameChange = { friendNicknameInput = it },
+                                onSendRequest = { viewModel.sendFriendRequest(friendNicknameInput); friendNicknameInput = "" },
+                                onRespondRequest = viewModel::respondToFriendRequest,
+                                onRemoveFriend = viewModel::removeFriend,
+                                onBlockFriend = viewModel::blockFriend,
+                                onSendRoomInvite = viewModel::sendRoomInviteToFriend,
+                                onRespondInvite = viewModel::respondToFriendRoomInvite,
+                                onClearMessage = viewModel::clearFriendsMessage,
+                                canInvite = false
+                            )
                         }
                     }
                 }
+            }
+        }
+        if (isRoomAudioTransferLoading) {
+            Text(
+                "Recebendo e verificando a música enviada pelo anfitrião...",
+                color = RockAccentCyan,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+        pendingRoomAudioChoice?.let { pending ->
+            AlertDialog(
+                onDismissRequest = { },
+                title = { Text("MÚSICA RECEBIDA DO ANFITRIÃO", fontWeight = FontWeight.Black) },
+                text = {
+                    Text(
+                        "${pending.transfer.title} — ${pending.transfer.artist}\n\nComo deseja usar esta faixa? Você pode mantê-la apenas durante esta partida ou adicioná-la permanentemente à biblioteca do Guitar Legends.",
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = viewModel::useReceivedRoomAudioTemporarily,
+                        modifier = Modifier.testTag("received_audio_use_temporary_button")
+                    ) { Text("SÓ NESTA PARTIDA") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = viewModel::saveReceivedRoomAudioToLibrary,
+                        modifier = Modifier.testTag("received_audio_save_library_button")
+                    ) { Text("ADICIONAR À BIBLIOTECA") }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun FriendsPanel(
+    isSignedIn: Boolean,
+    currentUid: String,
+    requests: List<FriendRequestCloud>,
+    invites: List<RoomInviteCloud>,
+    presence: Map<String, FriendPresenceCloud>,
+    allowInvites: Boolean,
+    onAllowInvitesChange: (Boolean) -> Unit,
+    message: String?,
+    nicknameInput: String,
+    onNicknameChange: (String) -> Unit,
+    onSendRequest: () -> Unit,
+    onRespondRequest: (String, Boolean) -> Unit,
+    onRemoveFriend: (String) -> Unit,
+    onBlockFriend: (String) -> Unit,
+    onSendRoomInvite: (String) -> Unit,
+    onRespondInvite: (String, Boolean) -> Unit,
+    onClearMessage: () -> Unit,
+    canInvite: Boolean
+) {
+    if (!isSignedIn) return
+    Surface(
+        color = Color(0x18FFFFFF),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 175.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("AMIGOS E CONVITES", color = RockAccentGold, fontWeight = FontWeight.Black, fontSize = 10.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Receber convites de amigos", color = Color.White, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = allowInvites,
+                    onCheckedChange = onAllowInvitesChange,
+                    modifier = Modifier.testTag("friends_allow_room_invites_switch")
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = nicknameInput,
+                    onValueChange = onNicknameChange,
+                    modifier = Modifier.weight(1f).heightIn(min = 42.dp).testTag("friends_nickname_input"),
+                    singleLine = true,
+                    placeholder = { Text("Nickname do jogador", fontSize = 10.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = RockAccentCyan,
+                        unfocusedBorderColor = RockCardBorder
+                    )
+                )
+                Button(
+                    onClick = onSendRequest,
+                    enabled = nicknameInput.trim().length >= 3,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("friends_send_request_button")
+                ) { Text("ADICIONAR", fontSize = 9.sp, fontWeight = FontWeight.Black) }
+            }
+            if (!message.isNullOrBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, color = RockAccentCyan, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onClearMessage) { Text("OK", fontSize = 9.sp) }
+                }
+            }
+            invites.filter { it.status == "PENDING" }.forEach { invite ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Convite de ${invite.senderNickname} • Sala ${invite.roomCode}", color = Color.White, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onRespondInvite(invite.id, true) }) { Text("ACEITAR", color = RockAccentGreen, fontSize = 8.sp) }
+                    TextButton(onClick = { onRespondInvite(invite.id, false) }) { Text("RECUSAR", color = RockAccentRed, fontSize = 8.sp) }
+                }
+            }
+            requests.filter { it.status == "PENDING" && it.recipientUid == currentUid }.forEach { request ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Solicitação: ${request.senderNickname}", color = Color.White, fontSize = 9.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onRespondRequest(request.id, true) }) { Text("ACEITAR", color = RockAccentGreen, fontSize = 8.sp) }
+                    TextButton(onClick = { onRespondRequest(request.id, false) }) { Text("RECUSAR", color = RockAccentRed, fontSize = 8.sp) }
+                    TextButton(onClick = { onBlockFriend(request.senderUid) }) { Text("BLOQUEAR", color = RockAccentRed, fontSize = 8.sp) }
+                }
+            }
+            requests.filter { it.status == "ACCEPTED" }.forEach { request ->
+                val friendUid = if (request.senderUid == currentUid) request.recipientUid else request.senderUid
+                val friendName = if (request.senderUid == currentUid) request.recipientNickname else request.senderNickname
+                val friendState = presence[friendUid]
+                val online = friendState?.isOnline() == true
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${if (online) "● ONLINE" else "○ OFFLINE"} • ${friendName}",
+                        color = if (online) RockAccentGreen else Color.White.copy(alpha = 0.75f),
+                        fontSize = 9.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (canInvite && online && friendState?.allowRoomInvites == true) TextButton(onClick = { onSendRoomInvite(friendUid) }) {
+                        Text("CONVIDAR", color = RockAccentCyan, fontSize = 8.sp)
+                    }
+                    TextButton(onClick = { onRemoveFriend(friendUid) }) { Text("REMOVER", color = RockAccentGold, fontSize = 8.sp) }
+                    TextButton(onClick = { onBlockFriend(friendUid) }) { Text("BLOQUEAR", color = RockAccentRed, fontSize = 8.sp) }
+                }
+            }
+            requests.filter { it.status == "PENDING" && it.senderUid == currentUid }.forEach { request ->
+                Text("Solicitação enviada para ${request.recipientNickname}", color = Color.White.copy(alpha = 0.65f), fontSize = 8.sp)
             }
         }
     }

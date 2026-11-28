@@ -20,6 +20,7 @@ import com.example.guitarlegends.engine.ParticleSystem
 import com.example.guitarlegends.input.ConnectedControllerInfo
 import com.example.guitarlegends.input.GamepadInputManager
 import com.example.guitarlegends.model.*
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.Job
@@ -30,8 +31,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.File
 import java.util.UUID
 import kotlin.math.abs
+
+data class PendingRoomAudioChoice(
+    val transfer: MultiplayerAudioTransferCloud,
+    val file: File
+)
 
 sealed class GameScreen {
     object Splash : GameScreen()
@@ -61,7 +68,7 @@ sealed class AuthUiState {
     data class Authenticated(val uid: String, val email: String, val nickname: String) : AuthUiState()
 }
 
-class GameViewModel(application: Application) : AndroidViewModel(application) {
+class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) : AndroidViewModel(application) {
 
     private val context: Context = application.applicationContext
     val audioPlayer = AudioPlayerEngine(context)
@@ -85,16 +92,30 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private var authJob: Job? = null
 
-    private val firebaseAuth: FirebaseAuth? = FirebaseClientProvider.getAuthOrNull(context)
+    private val firebaseAuth: FirebaseAuth? = FirebaseClientProvider.getAuthOrNull(context, firebaseApp)
     private val accountRepo: AccountCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) AccountCloudRepository(db, auth) else null
     }
     private val multiplayerRepo: MultiplayerCloudRepository? = run {
-        val db = FirebaseClientProvider.getFirestoreOrNull(context)
+        // O Firestore precisa usar o mesmo FirebaseApp do FirebaseAuth injetado.
+        // Isso mantém produção e testes/emuladores autenticados no mesmo projeto.
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
         val auth = firebaseAuth
         if (db != null && auth != null) MultiplayerCloudRepository(db, auth) else null
+    }
+
+    private val friendsRepo: FriendsCloudRepository? = run {
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
+        val auth = firebaseAuth
+        if (db != null && auth != null) FriendsCloudRepository(db, auth) else null
+    }
+
+    private val audioTransferRepo: MultiplayerAudioTransferRepository? = run {
+        val db = FirebaseClientProvider.getFirestoreOrNull(context, firebaseApp)
+        val auth = firebaseAuth
+        if (db != null && auth != null) MultiplayerAudioTransferRepository(context, db, auth) else null
     }
 
     // Navegação
@@ -162,10 +183,45 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _disconnectedPeerNicknames = MutableStateFlow<List<String>>(emptyList())
     val disconnectedPeerNicknames: StateFlow<List<String>> = _disconnectedPeerNicknames.asStateFlow()
 
+    private val _strikeEvents = MutableStateFlow<List<StrikeEventCloud>>(emptyList())
+    val strikeEvents: StateFlow<List<StrikeEventCloud>> = _strikeEvents.asStateFlow()
+    private val _incomingStrike = MutableStateFlow<StrikeEventCloud?>(null)
+    val incomingStrike: StateFlow<StrikeEventCloud?> = _incomingStrike.asStateFlow()
+    private val _activeStrikePower = MutableStateFlow<String?>(null)
+    val activeStrikePower: StateFlow<String?> = _activeStrikePower.asStateFlow()
+    private var activeStrikeUntilMs = 0L
+    private var lastStrikeSentAtMs = 0L
+
     private var roomObserveJob: Job? = null
     private var participantsObserveJob: Job? = null
+    private var strikesObserveJob: Job? = null
     private var heartbeatJob: Job? = null
     private var hasAutoStartedRoomMatch: Boolean = false
+
+    private val _friendRequests = MutableStateFlow<List<FriendRequestCloud>>(emptyList())
+    val friendRequests: StateFlow<List<FriendRequestCloud>> = _friendRequests.asStateFlow()
+    private val _roomInvites = MutableStateFlow<List<RoomInviteCloud>>(emptyList())
+    val roomInvites: StateFlow<List<RoomInviteCloud>> = _roomInvites.asStateFlow()
+    private val privacyPreferences = context.getSharedPreferences("multiplayer_privacy", Context.MODE_PRIVATE)
+    private val _allowFriendRoomInvites = MutableStateFlow(privacyPreferences.getBoolean("allow_friend_room_invites", true))
+    val allowFriendRoomInvites: StateFlow<Boolean> = _allowFriendRoomInvites.asStateFlow()
+    private val _friendPresence = MutableStateFlow<Map<String, FriendPresenceCloud>>(emptyMap())
+    val friendPresence: StateFlow<Map<String, FriendPresenceCloud>> = _friendPresence.asStateFlow()
+    private val _friendsMessage = MutableStateFlow<String?>(null)
+    val friendsMessage: StateFlow<String?> = _friendsMessage.asStateFlow()
+    private val _pendingRoomAudioChoice = MutableStateFlow<PendingRoomAudioChoice?>(null)
+    val pendingRoomAudioChoice: StateFlow<PendingRoomAudioChoice?> = _pendingRoomAudioChoice.asStateFlow()
+    private val _isRoomAudioReady = MutableStateFlow(true)
+    val isRoomAudioReady: StateFlow<Boolean> = _isRoomAudioReady.asStateFlow()
+    private val _isRoomAudioTransferLoading = MutableStateFlow(false)
+    val isRoomAudioTransferLoading: StateFlow<Boolean> = _isRoomAudioTransferLoading.asStateFlow()
+    private var audioTransferJob: Job? = null
+    private var lastPreparedAudioTransferId: String = ""
+    private var temporaryRoomAudioFile: File? = null
+    private var friendsObserveJob: Job? = null
+    private var roomInvitesObserveJob: Job? = null
+    private var friendPresenceObserveJob: Job? = null
+    private var presenceHeartbeatJob: Job? = null
 
     // Status & Progressão do Jogador
     private val _playerStats = MutableStateFlow(PlayerStats())
@@ -622,6 +678,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     nickname = remote.nickname
                 )
                 refreshAccountSubcollections()
+                startFriendsObservers()
                 checkForUpdates(silent = true)
             }
         }.onFailure { err ->
@@ -921,6 +978,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             leaveMultiplayerRoom()
             stop()
             stopPreview()
+            friendsObserveJob?.cancel()
+            roomInvitesObserveJob?.cancel()
+            friendPresenceObserveJob?.cancel()
+            presenceHeartbeatJob?.cancel()
+            runCatching { friendsRepo?.setPresence(false, _allowFriendRoomInvites.value) }
+            _friendRequests.value = emptyList()
+            _roomInvites.value = emptyList()
+            _friendPresence.value = emptyMap()
             firebaseAuth?.signOut()
             GoogleSignInHelper.clearCredentials(context)
             val freshGuest = PlayerStats()
@@ -1670,8 +1735,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         isCompetitiveMatch = competitive
     }
 
-    fun isStrikeEnabledForCurrentMatch(): Boolean =
-        _multiplayerRoom.value?.strikeEnabled ?: _localStrikeEnabled.value
+    fun isStrikeEnabledForCurrentMatch(): Boolean {
+        val room = _multiplayerRoom.value ?: return _localStrikeEnabled.value
+        val participants = _multiplayerParticipants.value
+        return room.strikeEnabled && participants.size >= 2 && participants.all { it.strikeConsent }
+    }
 
     fun setLocalMultiplayerMatch(active: Boolean) {
         _isLocalMultiplayerMatch.value = active
@@ -1870,6 +1938,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _rockMeter.value = 0.6f
         _starPowerEnergy.value = 0.0f
         _isStarPowerActive.value = false
+        _activeStrikePower.value = null
+        activeStrikeUntilMs = 0L
+        _incomingStrike.value = null
         _lastHitRating.value = null
         _activeFretLanes.value = emptySet()
         _activePickFlashes.value = emptyMap()
@@ -1877,11 +1948,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         totalHitCount = 0
         totalMissCount = 0
 
-        val strikeAllowed = isStrikeEnabledForCurrentMatch()
         adaptiveEngine = AdaptiveEngine(selectedDifficulty, _playerStats.value.glassAdaptiveEnabled)
-        val rawNotes = AudioAnalyzer.generateChart(selectedTrack, selectedInstrument, selectedDifficulty)
-        val generatedNotes = if (strikeAllowed) rawNotes else rawNotes.map { it.copy(isStarPower = false) }
-        _activeNotes.value = generatedNotes
+        _activeNotes.value = AudioAnalyzer.generateChart(selectedTrack, selectedInstrument, selectedDifficulty)
 
         audioPlayer.loadTrack(
             track = selectedTrack,
@@ -1901,6 +1969,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         gameLoopJob = viewModelScope.launch {
             val latencyOffset = _playerStats.value.audioLatencyOffsetMs
             var lastMultiplayerSyncMs = 0L
+            var multiplayerProgressSyncInFlight = false
 
             while (isActive && _currentScreen.value is GameScreen.Gameplay) {
                 if (!_isPaused.value) {
@@ -1922,10 +1991,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
-                    if (!isStrikeEnabledForCurrentMatch()) {
-                        _isStarPowerActive.value = false
-                        _starPowerEnergy.value = 0f
-                    } else if (_isStarPowerActive.value) {
+                    if (_isStarPowerActive.value) {
                         _starPowerEnergy.value = (_starPowerEnergy.value - 0.003f).coerceAtLeast(0f)
                         if (_starPowerEnergy.value <= 0f) {
                             _isStarPowerActive.value = false
@@ -1934,6 +2000,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     val nowWallMs = System.currentTimeMillis()
+                    if (_activeStrikePower.value != null && nowWallMs >= activeStrikeUntilMs) {
+                        _activeStrikePower.value = null
+                        activeStrikeUntilMs = 0L
+                    }
                     if (_activePickFlashes.value.isNotEmpty()) {
                         val pruned = _activePickFlashes.value.filterValues { (nowWallMs - it) <= 260L }
                         if (pruned.size != _activePickFlashes.value.size) {
@@ -1942,17 +2012,43 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     val activeRoom = _multiplayerRoom.value
-                    if (activeRoom != null && (nowWallMs - lastMultiplayerSyncMs) >= 450L) {
-                        lastMultiplayerSyncMs = nowWallMs
-                        multiplayerRepo?.let { mRepo ->
+                    // Placar sincronizado em intervalo moderado; nunca acumula gravações concorrentes.
+                    // A presença é atualizada separadamente pelo heartbeat de 15 segundos.
+                    if (activeRoom != null &&
+                        (nowWallMs - lastMultiplayerSyncMs) >= 2_000L &&
+                        !multiplayerProgressSyncInFlight
+                    ) {
+                        val mRepo = multiplayerRepo
+                        if (mRepo != null) {
+                            lastMultiplayerSyncMs = nowWallMs
+                            multiplayerProgressSyncInFlight = true
                             launch {
-                                mRepo.updateParticipantProgress(
-                                    roomCode = activeRoom.roomCode,
-                                    score = _score.value,
-                                    combo = _combo.value,
-                                    rockMeter = _rockMeter.value,
-                                    starPowerActive = _isStarPowerActive.value
-                                )
+                                try {
+                                    val result = mRepo.updateParticipantProgress(
+                                        roomCode = activeRoom.roomCode,
+                                        score = _score.value,
+                                        combo = _combo.value,
+                                        rockMeter = _rockMeter.value,
+                                        starPowerActive = _isStarPowerActive.value
+                                    )
+                                    result.onFailure { error ->
+                                        if (_multiplayerRoom.value?.roomCode == activeRoom.roomCode) {
+                                            _multiplayerConnectionWarning.value =
+                                                multiplayerServiceErrorMessage(
+                                                    error,
+                                                    "Falha ao sincronizar o placar multiplayer."
+                                                )
+                                        }
+                                    }
+                                    if (result.isSuccess &&
+                                        _multiplayerRoom.value?.roomCode == activeRoom.roomCode &&
+                                        _multiplayerConnectionWarning.value == FIRESTORE_QUOTA_WARNING
+                                    ) {
+                                        _multiplayerConnectionWarning.value = null
+                                    }
+                                } finally {
+                                    multiplayerProgressSyncInFlight = false
+                                }
                             }
                         }
                     }
@@ -1974,8 +2070,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     internal fun processSustainingNotes(currentPosMs: Long) {
-        val heldLanes = _activeFretLanes.value
-        val strikeAllowed = isStrikeEnabledForCurrentMatch()
+        val heldLanes = _activeFretLanes.value.map { lane ->
+            if (_activeStrikePower.value == "LANE_INVERSION") selectedDifficulty.lanesUsed - 1 - lane else lane
+        }.toSet()
         for (note in _activeNotes.value) {
             if (note.isHit && note.durationMs > 50L && note.isSustaining && !note.sustainBroken && !note.sustainCompleted) {
                 val endMs = note.timeMs + note.durationMs
@@ -1991,7 +2088,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     note.lastSustainTickMs = currentPosMs
                     val tickPts = (12 * selectedDifficulty.scoreMultiplier * _multiplier.value).toInt().coerceAtLeast(1)
                     _score.value = _score.value + tickPts
-                    if (note.isStarPower && strikeAllowed) {
+                    if (note.isStarPower) {
                         _starPowerEnergy.value = (_starPowerEnergy.value + 0.012f).coerceAtMost(1.0f)
                     }
                 }
@@ -2000,7 +2097,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun checkMissedNotes(currentPosMs: Long) {
-        val window = adaptiveEngine.getEffectiveHitWindowMs()
+        val baseWindow = adaptiveEngine.getEffectiveHitWindowMs()
+        val window = if (_activeStrikePower.value == "FOG") (baseWindow * 0.65f).toLong() else baseWindow
         val notes = _activeNotes.value
 
         for (note in notes) {
@@ -2021,8 +2119,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun onFretUp(lane: Int) {
         _activeFretLanes.value = _activeFretLanes.value - lane
         val currentPos = _currentSongTimeMs.value
+        val chartLane = if (_activeStrikePower.value == "LANE_INVERSION") {
+            selectedDifficulty.lanesUsed - 1 - lane
+        } else lane
         for (note in _activeNotes.value) {
-            if (note.lane == lane && note.isHit && note.isSustaining && !note.sustainCompleted) {
+            if (note.lane == chartLane && note.isHit && note.isSustaining && !note.sustainCompleted) {
                 if (currentPos < note.timeMs + note.durationMs - 40L) {
                     note.isSustaining = false
                     note.sustainBroken = true
@@ -2050,7 +2151,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun activateStarPower() {
-        if (!isStrikeEnabledForCurrentMatch()) return
         if (_starPowerEnergy.value >= 0.5f && !_isStarPowerActive.value) {
             _isStarPowerActive.value = true
             soundFx.playStarPower()
@@ -2061,14 +2161,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun attemptHit(lane: Int) {
         val currentPos = _currentSongTimeMs.value
-        val effectiveWindow = adaptiveEngine.getEffectiveHitWindowMs()
+        val baseWindow = adaptiveEngine.getEffectiveHitWindowMs()
+        val effectiveWindow = if (_activeStrikePower.value == "FOG") (baseWindow * 0.65f).toLong() else baseWindow
+        val mappedLane = if (_activeStrikePower.value == "LANE_INVERSION") {
+            (selectedDifficulty.lanesUsed - 1 - lane).coerceAtLeast(0)
+        } else lane
         val notes = _activeNotes.value
 
         var closestNote: Note? = null
         var minDiff = Long.MAX_VALUE
 
         for (note in notes) {
-            if (!note.isHit && !note.isMissed && note.lane == lane) {
+            if (!note.isHit && !note.isMissed && note.lane == mappedLane) {
                 val diff = abs(note.timeMs - currentPos)
                 if (diff <= effectiveWindow && diff < minDiff) {
                     minDiff = diff
@@ -2092,7 +2196,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 minDiff <= (effectiveWindow * 0.70).toLong() -> HitRating.GREAT
                 else -> HitRating.GOOD
             }
-            onHit(lane, rating, closestNote.isStarPower, minDiff)
+            onHit(mappedLane, rating, closestNote.isStarPower, minDiff)
         } else {
             onMiss(lane)
         }
@@ -2114,7 +2218,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
         _rockMeter.value = (_rockMeter.value + rating.healthDelta).coerceIn(0f, 1f)
 
-        if (isStarPower && isStrikeEnabledForCurrentMatch()) {
+        if (isStarPower) {
             _starPowerEnergy.value = (_starPowerEnergy.value + 0.12f).coerceAtMost(1.0f)
         }
 
@@ -2175,6 +2279,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         audioPlayer.stop()
         gameLoopJob?.cancel()
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
 
         val totalNotesCount = (totalHitCount + totalMissCount).coerceAtLeast(1)
         val accuracy = (totalHitCount.toFloat() / totalNotesCount.toFloat()) * 100f
@@ -2274,7 +2380,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         track = selectedTrack,
                         status = RoomStatus.FINISHED,
                         winnerUid = topUid
-                    )
+                    ).onSuccess {
+                        audioTransferRepo?.deleteRoomTransfers(activeRoom.roomCode)
+                    }
                 }
             }
         }
@@ -2431,18 +2539,382 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun prepareRoomAudio(room: MultiplayerRoomCloud) {
+        val repo = multiplayerRepo ?: return
+        val uid = repo.currentUidOrNull() ?: return
+        if (room.hostUid == uid) {
+            _isRoomAudioReady.value = true
+            return
+        }
+
+        val exactLocalTrack = _tracks.value.firstOrNull { it.id == room.trackId }
+        if (exactLocalTrack != null) {
+            lastPreparedAudioTransferId = room.audioTransferId
+            selectTrack(exactLocalTrack)
+            _isRoomAudioReady.value = true
+            _pendingRoomAudioChoice.value?.file?.delete()
+            _pendingRoomAudioChoice.value = null
+            temporaryRoomAudioFile?.delete()
+            temporaryRoomAudioFile = null
+            return
+        }
+
+        _isRoomAudioReady.value = false
+        if (room.audioTransferId.isBlank()) {
+            _multiplayerError.value = "O anfitrião ainda não disponibilizou o áudio desta faixa."
+            return
+        }
+        if (lastPreparedAudioTransferId == room.audioTransferId &&
+            (_pendingRoomAudioChoice.value?.transfer?.id == room.audioTransferId ||
+                _isRoomAudioTransferLoading.value || _isRoomAudioReady.value)
+        ) return
+
+        lastPreparedAudioTransferId = room.audioTransferId
+        audioTransferJob?.cancel()
+        _pendingRoomAudioChoice.value?.file?.delete()
+        _pendingRoomAudioChoice.value = null
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
+        audioTransferJob = viewModelScope.launch {
+            _isRoomAudioTransferLoading.value = true
+            _multiplayerError.value = null
+            try {
+                val transferRepo = audioTransferRepo
+                    ?: throw IllegalStateException("Transferência de áudio multiplayer indisponível.")
+                if (room.trackFingerprint.isNotBlank()) {
+                    val matchingTrack = _tracks.value.firstOrNull { track ->
+                        !track.isBuiltIn && transferRepo.fingerprint(track).getOrNull() == room.trackFingerprint
+                    }
+                    if (matchingTrack != null) {
+                        lastPreparedAudioTransferId = room.audioTransferId
+                        selectTrack(matchingTrack)
+                        _isRoomAudioReady.value = true
+                        _pendingRoomAudioChoice.value = null
+                        temporaryRoomAudioFile?.delete()
+                        temporaryRoomAudioFile = null
+                        return@launch
+                    }
+                }
+
+                val downloaded = transferRepo.downloadToCache(room.roomCode, room.audioTransferId)
+                    .getOrThrow()
+                temporaryRoomAudioFile?.delete()
+                temporaryRoomAudioFile = null
+                _pendingRoomAudioChoice.value = PendingRoomAudioChoice(
+                    transfer = downloaded.first,
+                    file = downloaded.second
+                )
+            } catch (error: Exception) {
+                _multiplayerError.value = error.message ?: "Não foi possível receber a música do anfitrião."
+            } finally {
+                _isRoomAudioTransferLoading.value = false
+            }
+        }
+    }
+
+    fun retryRoomAudioTransfer() {
+        val room = _multiplayerRoom.value ?: return
+        lastPreparedAudioTransferId = ""
+        prepareRoomAudio(room)
+    }
+
+    fun useReceivedRoomAudioTemporarily() {
+        val pending = _pendingRoomAudioChoice.value ?: return
+        viewModelScope.launch {
+            val result = musicLibraryRepository.createTemporaryTrack(
+                audioFile = pending.file,
+                title = pending.transfer.title,
+                artist = pending.transfer.artist,
+                mimeType = pending.transfer.mimeType
+            )
+            result.onSuccess { track ->
+                temporaryRoomAudioFile?.delete()
+                temporaryRoomAudioFile = pending.file
+                selectTrack(track)
+                _pendingRoomAudioChoice.value = null
+                _isRoomAudioReady.value = true
+                _multiplayerError.value = "Áudio preparado somente para esta partida. Ele será removido ao sair."
+            }.onFailure { error ->
+                _multiplayerError.value = error.message ?: "Não foi possível preparar o áudio temporário."
+            }
+        }
+    }
+
+    fun saveReceivedRoomAudioToLibrary() {
+        val pending = _pendingRoomAudioChoice.value ?: return
+        viewModelScope.launch {
+            val result = musicLibraryRepository.importAudio(Uri.fromFile(pending.file))
+            result.onSuccess { imported ->
+                val refreshed = musicLibraryRepository.loadAllTracks()
+                _tracks.value = refreshed
+                val storedTrack = refreshed.firstOrNull { it.id == imported.id } ?: imported
+                selectTrack(storedTrack)
+                pending.file.delete()
+                _pendingRoomAudioChoice.value = null
+                _isRoomAudioReady.value = true
+                _multiplayerError.value = "Música adicionada permanentemente à biblioteca do Guitar Legends."
+            }.onFailure { error ->
+                _multiplayerError.value = error.message ?: "Não foi possível adicionar a música à biblioteca."
+            }
+        }
+    }
+
     fun updateMultiplayerTrack(track: Track) {
+        val previousTrack = selectedTrack
         selectTrack(track)
         val room = _multiplayerRoom.value ?: return
-        val uid = multiplayerRepo?.currentUidOrNull() ?: return
+        val multiplayer = multiplayerRepo ?: return
+        val uid = multiplayer.currentUidOrNull() ?: return
         if (room.hostUid == uid) {
+            if (_multiplayerParticipants.value.any { it.userId != uid && it.ready }) {
+                _multiplayerError.value = "Peça aos participantes para desmarcarem PRONTO antes de trocar a música."
+                selectTrack(previousTrack)
+                return
+            }
             viewModelScope.launch {
-                multiplayerRepo.updateRoomHostConfig(
+                _isMultiplayerBusy.value = true
+                _multiplayerError.value = null
+                var transferId = ""
+                var fingerprint = ""
+                if (!track.isBuiltIn) {
+                    val transferResult = audioTransferRepo?.uploadTrack(room.roomCode, track)
+                    if (transferResult == null || transferResult.isFailure) {
+                        selectTrack(previousTrack)
+                        _multiplayerError.value = transferResult?.exceptionOrNull()?.message
+                            ?: "Não foi possível preparar o áudio para os participantes."
+                        _isMultiplayerBusy.value = false
+                        return@launch
+                    }
+                    val transfer = transferResult.getOrThrow()
+                    transferId = transfer.id
+                    fingerprint = transfer.sha256
+                }
+                multiplayer.updateRoomHostConfig(
                     roomCode = room.roomCode,
                     mode = _multiplayerMode.value,
-                    track = track
-                ).onFailure { err ->
+                    track = track,
+                    audioTransferId = transferId,
+                    trackFingerprint = fingerprint
+                ).onSuccess {
+                    _multiplayerRoom.value = room.copy(
+                        trackId = track.id,
+                        trackTitle = track.title,
+                        audioTransferId = transferId,
+                        trackFingerprint = fingerprint
+                    )
+                }.onFailure { err ->
+                    selectTrack(previousTrack)
                     _multiplayerError.value = err.message ?: "Falha ao sincronizar música da sala."
+                }
+                _isMultiplayerBusy.value = false
+            }
+        }
+    }
+
+    private fun startFriendsObservers() {
+        val repo = friendsRepo ?: return
+        friendsObserveJob?.cancel()
+        roomInvitesObserveJob?.cancel()
+        presenceHeartbeatJob?.cancel()
+        friendsObserveJob = viewModelScope.launch {
+            repo.observeRequests().collect { requests ->
+                _friendRequests.value = requests
+                val uid = firebaseAuth?.currentUser?.uid
+                val friendIds = requests.filter { it.status == "ACCEPTED" }.mapNotNull { request ->
+                    when (uid) {
+                        request.senderUid -> request.recipientUid
+                        request.recipientUid -> request.senderUid
+                        else -> null
+                    }
+                }.distinct()
+                friendPresenceObserveJob?.cancel()
+                friendPresenceObserveJob = viewModelScope.launch {
+                    repo.observePresence(friendIds).collect { _friendPresence.value = it }
+                }
+            }
+        }
+        roomInvitesObserveJob = viewModelScope.launch {
+            repo.observeRoomInvites().collect { _roomInvites.value = it }
+        }
+        presenceHeartbeatJob = viewModelScope.launch {
+            while (isActive) {
+                repo.setPresence(true, _allowFriendRoomInvites.value)
+                delay(120_000L)
+            }
+        }
+    }
+
+    fun sendFriendRequest(nickname: String) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.sendFriendRequest(nickname).onSuccess {
+                _friendsMessage.value = "Solicitação de amizade enviada."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível enviar a solicitação."
+            }
+        }
+    }
+
+    fun respondToFriendRequest(requestId: String, accept: Boolean) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.respondToRequest(requestId, accept).onSuccess {
+                _friendsMessage.value = if (accept) "Amizade aceita." else "Solicitação recusada."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível responder à solicitação."
+            }
+        }
+    }
+
+    fun removeFriend(friendUid: String) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.removeFriend(friendUid).onSuccess {
+                _friendsMessage.value = "Amigo removido da lista."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível remover o amigo."
+            }
+        }
+    }
+
+    fun blockFriend(friendUid: String) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.blockUser(friendUid).onSuccess {
+                _friendsMessage.value = "Jogador bloqueado."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível bloquear o jogador."
+            }
+        }
+    }
+
+    fun sendRoomInviteToFriend(friendUid: String) {
+        val repo = friendsRepo ?: return
+        val room = _multiplayerRoom.value ?: run {
+            _friendsMessage.value = "Crie ou entre em uma sala antes de convidar um amigo."
+            return
+        }
+        viewModelScope.launch {
+            repo.sendRoomInvite(friendUid, room.roomCode, _playerStats.value.nickname).onSuccess {
+                _friendsMessage.value = "Convite enviado diretamente ao amigo."
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível enviar o convite."
+            }
+        }
+    }
+
+    fun respondToFriendRoomInvite(inviteId: String, accept: Boolean) {
+        val repo = friendsRepo ?: return
+        viewModelScope.launch {
+            repo.respondToRoomInvite(inviteId, accept).onSuccess { roomCode ->
+                _friendsMessage.value = if (accept) "Convite aceito. Entrando na sala..." else "Convite recusado."
+                if (!roomCode.isNullOrBlank()) joinMultiplayerRoom(roomCode)
+            }.onFailure { error ->
+                _friendsMessage.value = error.message ?: "Não foi possível responder ao convite."
+            }
+        }
+    }
+
+    fun setAllowFriendRoomInvites(allowed: Boolean) {
+        _allowFriendRoomInvites.value = allowed
+        privacyPreferences.edit().putBoolean("allow_friend_room_invites", allowed).apply()
+        viewModelScope.launch {
+            friendsRepo?.setPresence(true, allowed)
+        }
+    }
+
+    fun clearFriendsMessage() {
+        _friendsMessage.value = null
+    }
+
+    fun setMultiplayerStrikeConsent(consent: Boolean) {
+        val room = _multiplayerRoom.value ?: return
+        if (room.statusEnum != RoomStatus.WAITING) {
+            _multiplayerError.value = "O consentimento do Strike só pode ser alterado antes da partida."
+            return
+        }
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            repo.updateParticipantStrikeConsent(room.roomCode, consent).onFailure { err ->
+                _multiplayerError.value = err.message ?: "Não foi possível atualizar seu consentimento para Strike."
+            }
+        }
+    }
+
+    fun sendStrike(targetUid: String, power: String) {
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        if (!isStrikeEnabledForCurrentMatch()) {
+            _multiplayerError.value = "Strike só funciona quando todos os jogadores concordam."
+            return
+        }
+        if (room.statusEnum != RoomStatus.PLAYING) {
+            _multiplayerError.value = "Os ataques Strike só podem ser usados durante a partida."
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastStrikeSentAtMs < 5_000L) {
+            _multiplayerError.value = "Aguarde alguns segundos antes de usar outro Strike."
+            return
+        }
+        lastStrikeSentAtMs = now
+        viewModelScope.launch {
+            repo.sendStrike(room.roomCode, targetUid, power).onFailure { err ->
+                _multiplayerError.value = err.message ?: "Não foi possível enviar o ataque Strike."
+            }
+        }
+    }
+
+    fun defendStrike(strikeId: String) {
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            repo.defendStrike(room.roomCode, strikeId).onSuccess {
+                if (_incomingStrike.value?.id == strikeId) _incomingStrike.value = null
+            }.onFailure { err ->
+                _multiplayerError.value = err.message ?: "Não foi possível defender o ataque Strike."
+            }
+        }
+    }
+
+    private fun observeStrikeEvents(roomCode: String) {
+        val repo = multiplayerRepo ?: return
+        strikesObserveJob?.cancel()
+        strikesObserveJob = viewModelScope.launch {
+            val handledIds = mutableSetOf<String>()
+            try {
+                repo.observeStrikes(roomCode).collect { events ->
+                    _strikeEvents.value = events
+                    val uid = repo.currentUidOrNull()
+                    val nowMs = System.currentTimeMillis()
+                    val pending = events.filter {
+                        it.targetUid == uid && it.status == "PENDING" && it.createdAtMs + 7_500L > nowMs
+                    }
+                    _incomingStrike.value = pending.firstOrNull { it.createdAtMs + 2_500L > nowMs }
+                    for (event in pending) {
+                        if (handledIds.add(event.id)) {
+                            launch {
+                                val waitMs = (event.createdAtMs + 2_500L - System.currentTimeMillis()).coerceAtLeast(0L)
+                                delay(waitMs)
+                                val latest = _strikeEvents.value.firstOrNull { it.id == event.id }
+                                if (latest?.status == "PENDING") {
+                                    if (_incomingStrike.value?.id == event.id) _incomingStrike.value = null
+                                    _activeStrikePower.value = event.power
+                                    activeStrikeUntilMs = System.currentTimeMillis() + 5_000L
+                                    launch { repo.markStrikeApplied(roomCode, event.id) }
+                                }
+                            }
+                        }
+                    }
+                    if (_incomingStrike.value != null &&
+                        pending.none { it.id == _incomingStrike.value?.id }
+                    ) {
+                        _incomingStrike.value = null
+                    }
+                }
+            } catch (e: Exception) {
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    _multiplayerConnectionWarning.value = "Falha ao sincronizar o Sistema de Strike."
                 }
             }
         }
@@ -2465,6 +2937,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         _localStrikeEnabled.value = enabled
         viewModelScope.launch {
+            multiplayerRepo.updateParticipantStrikeConsent(room.roomCode, enabled).onFailure { err ->
+                _multiplayerError.value = err.message ?: "Falha ao registrar o consentimento do anfitrião."
+                return@launch
+            }
             multiplayerRepo.updateRoomHostConfig(
                 roomCode = room.roomCode,
                 mode = _multiplayerMode.value,
@@ -2534,9 +3010,36 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     repo.leaveOrCloseRoom(previousCode)
                 }
                 _multiplayerRoom.value = room
+                _isRoomAudioReady.value = true
                 startObservingMultiplayerRoom(room.roomCode)
+                if (!selectedTrack.isBuiltIn) {
+                    val transferResult = audioTransferRepo?.uploadTrack(room.roomCode, selectedTrack)
+                    if (transferResult == null || transferResult.isFailure) {
+                        _multiplayerError.value = transferResult?.exceptionOrNull()?.message
+                            ?: "Não foi possível disponibilizar o áudio aos participantes."
+                    } else {
+                        val transfer = transferResult.getOrThrow()
+                        repo.updateRoomHostConfig(
+                            roomCode = room.roomCode,
+                            mode = mode,
+                            track = selectedTrack,
+                            audioTransferId = transfer.id,
+                            trackFingerprint = transfer.sha256
+                        ).onSuccess {
+                            _multiplayerRoom.value = room.copy(
+                                audioTransferId = transfer.id,
+                                trackFingerprint = transfer.sha256
+                            )
+                        }.onFailure { error ->
+                            _multiplayerError.value = error.message ?: "Não foi possível sincronizar os dados do áudio."
+                        }
+                    }
+                }
             }.onFailure { err ->
-                _multiplayerError.value = err.message ?: "Não foi possível criar a sala multiplayer."
+                _multiplayerError.value = multiplayerServiceErrorMessage(
+                    err,
+                    "Não foi possível criar a sala multiplayer."
+                )
             }
             _isMultiplayerBusy.value = false
         }
@@ -2574,10 +3077,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 _multiplayerMode.value = room.modeEnum
                 _localStrikeEnabled.value = room.strikeEnabled
                 setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                prepareRoomAudio(room)
                 startObservingMultiplayerRoom(room.roomCode)
             }.onFailure { err ->
-                _multiplayerError.value = err.message ?: "Não foi possível entrar na sala."
+                _multiplayerError.value = multiplayerServiceErrorMessage(
+                    err,
+                    "Não foi possível entrar na sala."
+                )
             }
             _isMultiplayerBusy.value = false
         }
@@ -2585,6 +3091,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleMultiplayerReady() {
         val room = _multiplayerRoom.value ?: return
+        if (!_isRoomAudioReady.value) {
+            _multiplayerError.value = "Escolha como deseja usar a música recebida do anfitrião antes de marcar PRONTO."
+            return
+        }
         val repo = multiplayerRepo ?: return
         val uid = repo.currentUidOrNull() ?: return
         val self = _multiplayerParticipants.value.find { it.userId == uid }
@@ -2615,6 +3125,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val uid = repo.currentUidOrNull() ?: return
         if (room.hostUid != uid) {
             _multiplayerError.value = "Aguarde o anfitrião (${room.hostNickname}) iniciar a partida sincronizada."
+            return
+        }
+        if (!selectedTrack.isBuiltIn && (room.audioTransferId.isBlank() || room.trackFingerprint.length != 64)) {
+            _multiplayerError.value = "A música importada ainda não foi transferida e validada para todos os participantes."
             return
         }
         val participants = _multiplayerParticipants.value
@@ -2653,6 +3167,36 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Revalida a presença online ao retornar de outro aplicativo.
+     * Uma pausa do Android não deve ser confundida com saída voluntária da sala.
+     */
+    fun onAppForegrounded() {
+        refreshGamepadConnection()
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            val heartbeat = repo.sendHeartbeat(room.roomCode, ParticipantConnectionState.ONLINE)
+            if (heartbeat.isSuccess) {
+                if (roomObserveJob?.isActive != true || participantsObserveJob?.isActive != true || strikesObserveJob?.isActive != true) {
+                    startObservingMultiplayerRoom(room.roomCode)
+                }
+                val warning = _multiplayerConnectionWarning.value.orEmpty()
+                if (warning.contains("Falha de rede") ||
+                    warning.contains("Conexão com a sala") ||
+                    warning.contains("Erro ao sincronizar participantes")
+                ) {
+                    _multiplayerConnectionWarning.value = null
+                }
+                refreshMultiplayerPeerHealth()
+            } else {
+                // O heartbeat pode falhar se o Android suspendeu a conexão de rede.
+                // Reentrar com o mesmo usuário recupera o documento sem criar outro jogador.
+                reconnectMultiplayerRoom()
+            }
+        }
+    }
+
     fun reconnectMultiplayerRoom() {
         val room = _multiplayerRoom.value
         val repo = multiplayerRepo ?: return
@@ -2684,7 +3228,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun leaveMultiplayerRoom() {
-        val roomCode = _multiplayerRoom.value?.roomCode
+        val activeRoom = _multiplayerRoom.value
+        val roomCode = activeRoom?.roomCode
+        val leavingLastHost = activeRoom?.hostUid == multiplayerRepo?.currentUidOrNull() &&
+            _multiplayerParticipants.value.size <= 1
+        audioTransferJob?.cancel()
+        _pendingRoomAudioChoice.value?.file?.delete()
+        _pendingRoomAudioChoice.value = null
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
+        _isRoomAudioReady.value = true
+        _isRoomAudioTransferLoading.value = false
+        lastPreparedAudioTransferId = ""
         stopRoomObserversOnly()
         _multiplayerRoom.value = null
         _multiplayerParticipants.value = emptyList()
@@ -2697,7 +3252,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val repo = multiplayerRepo ?: return
         if (!roomCode.isNullOrBlank() && repo.currentUidOrNull() != null) {
             viewModelScope.launch {
-                repo.leaveOrCloseRoom(roomCode)
+                repo.leaveOrCloseRoom(roomCode).onSuccess {
+                    if (leavingLastHost) audioTransferRepo?.deleteRoomTransfers(roomCode)
+                }
             }
         }
     }
@@ -2712,6 +3269,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (staleNames.isNotEmpty()) {
             _multiplayerConnectionWarning.value =
                 "Conexão instável ou desconectado(s): ${staleNames.joinToString(", ")}"
+        } else if (_multiplayerConnectionWarning.value
+                ?.startsWith("Conexão instável ou desconectado(s):") == true
+        ) {
+            // Remove o aviso quando o heartbeat do participante voltar a chegar.
+            _multiplayerConnectionWarning.value = null
         }
     }
 
@@ -2720,6 +3282,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         roomObserveJob = null
         participantsObserveJob?.cancel()
         participantsObserveJob = null
+        strikesObserveJob?.cancel()
+        strikesObserveJob = null
+        friendsObserveJob?.cancel()
+        roomInvitesObserveJob?.cancel()
+        friendPresenceObserveJob?.cancel()
+        presenceHeartbeatJob?.cancel()
+        _strikeEvents.value = emptyList()
+        _incomingStrike.value = null
+        _activeStrikePower.value = null
+        activeStrikeUntilMs = 0L
         heartbeatJob?.cancel()
         heartbeatJob = null
     }
@@ -2762,7 +3334,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     _multiplayerMode.value = room.modeEnum
                     _localStrikeEnabled.value = room.strikeEnabled
                     setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
-                    _tracks.value.find { it.id == room.trackId }?.let { selectTrack(it) }
+                    if (room.audioTransferId != lastPreparedAudioTransferId || room.audioTransferId.isBlank()) {
+                        prepareRoomAudio(room)
+                    }
 
                     if (room.statusEnum == RoomStatus.PLAYING &&
                         !hasAutoStartedRoomMatch &&
@@ -2794,6 +3368,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        observeStrikeEvents(roomCode)
+
         heartbeatJob = viewModelScope.launch {
             var consecutiveFailures = 0
             while (isActive && _multiplayerRoom.value?.roomCode == roomCode) {
@@ -2801,8 +3377,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 if (res.isFailure) {
                     consecutiveFailures++
                     if (consecutiveFailures >= 2) {
-                        _multiplayerConnectionWarning.value =
+                        _multiplayerConnectionWarning.value = multiplayerServiceErrorMessage(
+                            res.exceptionOrNull(),
                             "Falha de rede na sala $roomCode. Verifique sua conexão ou toque em RECONECTAR."
+                        )
                     }
                 } else {
                     consecutiveFailures = 0
@@ -2813,7 +3391,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 refreshMultiplayerPeerHealth()
-                delay(4_000L)
+                delay(15_000L)
             }
         }
     }
@@ -2825,11 +3403,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         audioPlayer.stop()
         gameLoopJob?.cancel()
         previewProgressJob?.cancel()
+        temporaryRoomAudioFile?.delete()
+        temporaryRoomAudioFile = null
+        _pendingRoomAudioChoice.value?.file?.delete()
+        _pendingRoomAudioChoice.value = null
     }
 
     override fun onCleared() {
         super.onCleared()
         stopRoomObserversOnly()
+        temporaryRoomAudioFile?.delete()
+        _pendingRoomAudioChoice.value?.file?.delete()
+        audioTransferJob?.cancel()
         audioPlayer.release()
         gamepadManager.release()
     }

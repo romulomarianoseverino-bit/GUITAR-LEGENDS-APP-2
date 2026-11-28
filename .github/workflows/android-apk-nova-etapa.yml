@@ -30,92 +30,50 @@ jobs:
           yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses
           /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
-      - name: Criar chave de assinatura de depuração temporária
-        run: |
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-
-      - name: Preparar chave privada de publicação
+      - name: Preparar a mesma chave permanente do fluxo oficial
+        if: success()
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$KEYSTORE_BASE64" || { echo "::error::O segredo KEYSTORE_BASE64 está vazio."; exit 1; }
-          test -n "$STORE_PASSWORD" || { echo "::error::O segredo KEYSTORE_PASSWORD está vazio."; exit 1; }
+          test -n "$KEYSTORE_BASE64" || { echo "::error::Segredo DEBUG_KEYSTORE_BASE64 ausente."; exit 1; }
+          test -n "$STORE_PASSWORD" || { echo "::error::Segredo DEBUG_KEYSTORE_PASSWORD ausente."; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "::error::Segredo DEBUG_KEY_PASSWORD ausente."; exit 1; }
 
-          KEYSTORE_PATH="$RUNNER_TEMP/guitar-legends-upload.jks"
-          echo "Verificando a decodificação Base64..."
-          if ! printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"; then
-            echo "::error::Não foi possível decodificar KEYSTORE_BASE64. Verifique se o segredo foi copiado por completo."
-            exit 1
-          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/guitar-legends-permanent.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
-          echo "Arquivo decodificado. Tamanho: $(wc -c < "$KEYSTORE_PATH") bytes."
-          echo "Verificando a senha do keystore separadamente..."
           KEYTOOL_LOG="$RUNNER_TEMP/keytool-check.log"
-          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" >"$KEYTOOL_LOG" 2>&1; then
-            if grep -Eqi "password was incorrect|keystore was tampered" "$KEYTOOL_LOG"; then
-              echo "::error::O keytool recusou a senha KEYSTORE_PASSWORD (ou o arquivo do keystore está danificado)."
-            else
-              echo "::error::O keytool não conseguiu abrir o keystore. A mensagem técnica foi omitida para proteger dados."
-            fi
+          keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" > "$KEYTOOL_LOG"
+
+          mapfile -t PRIVATE_KEY_ALIASES < <(awk '
+            /^Alias name: / { alias = substr($0, index($0, ": ") + 2) }
+            /^Entry type: / {
+              entry_type = substr($0, index($0, ": ") + 2)
+              if (entry_type == "PrivateKeyEntry" && alias != "") print alias
+              alias = ""
+            }
+          ' "$KEYTOOL_LOG")
+          if [ "${#PRIVATE_KEY_ALIASES[@]}" -ne 1 ]; then
+            echo "::error::A chave permanente precisa conter exatamente uma entrada de chave privada."
             exit 1
           fi
-          echo "Senha do keystore aceita. Agora verificando o alias upload..."
-          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -alias upload >"$KEYTOOL_LOG" 2>&1; then
-            echo "::error::A senha do keystore foi aceita, mas o alias upload não foi encontrado ou não pôde ser lido."
-            exit 1
-          fi
-          echo "Keystore e alias upload validados com sucesso."
+
           echo "KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=${PRIVATE_KEY_ALIASES[0]}" >> "$GITHUB_ENV"
+          echo "STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "Chave permanente validada; nenhuma chave temporária será criada."
 
       - name: Configurar Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Compilar APK de depuração
-        id: debug_build
-        run: gradle --no-daemon assembleDebug
-
-      - name: Publicar APK de depuração
-        if: always() && steps.debug_build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Guitar-Legends-APK-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Compilar APK assinado de publicação
-        id: release_build
-        env:
-          KEYSTORE_PATH: ${{ runner.temp }}/guitar-legends-upload.jks
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: upload
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle --no-daemon assembleRelease
-
-      - name: Publicar APK assinado
-        if: always() && steps.release_build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Guitar-Legends-APK-release
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Executar testes unitários
+      - name: Executar testes unitários antes de compilar
         id: tests
-        if: always() && steps.debug_build.outcome == 'success'
         run: |
           gradle --no-daemon testDebugUnitTest \
             --tests "com.example.ExampleUnitTest" \
@@ -123,3 +81,18 @@ jobs:
             --tests "com.example.GuestModeAndAccountTest" \
             --tests "com.example.StudioAndHardwareTest" \
             --tests "com.example.ReconstructedFeaturesTest"
+
+      - name: Compilar APK assinado com a chave permanente
+        id: release_build
+        if: success()
+        run: gradle --no-daemon assembleRelease
+
+      - name: Publicar APK assinado
+        if: success() && steps.release_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Guitar-Legends-APK-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
