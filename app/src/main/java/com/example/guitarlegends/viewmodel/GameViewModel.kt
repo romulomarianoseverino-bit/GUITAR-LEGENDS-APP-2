@@ -2121,6 +2121,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun onFretDown(lane: Int) {
+        if (_isPaused.value) return
         _activeFretLanes.value = _activeFretLanes.value + lane
         if (_playerStats.value.controlMode == ControlMode.DIRECT_TOUCH) {
             attemptHit(lane)
@@ -2128,6 +2129,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun onFretUp(lane: Int) {
+        if (_isPaused.value) return
         _activeFretLanes.value = _activeFretLanes.value - lane
         val currentPos = _currentSongTimeMs.value
         val chartLane = if (_activeStrikePower.value == "LANE_INVERSION") {
@@ -2147,6 +2149,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun onStrumBar() {
+        if (_isPaused.value) return
         val pressed = _activeFretLanes.value
         val nowMs = System.currentTimeMillis()
         if (pressed.isNotEmpty()) {
@@ -2162,6 +2165,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun activateStarPower() {
+        if (_isPaused.value) return
         if (_starPowerEnergy.value >= 0.5f && !_isStarPowerActive.value) {
             _isStarPowerActive.value = true
             soundFx.playStarPower()
@@ -2171,6 +2175,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     private fun attemptHit(lane: Int) {
+        if (_isPaused.value) return
         val currentPos = _currentSongTimeMs.value
         val baseWindow = adaptiveEngine.getEffectiveHitWindowMs()
         val effectiveWindow = if (_activeStrikePower.value == "FOG") (baseWindow * 0.65f).toLong() else baseWindow
