@@ -6,7 +6,6 @@ import com.example.guitarlegends.data.MultiplayerCloudRepository
 import com.example.guitarlegends.model.Difficulty
 import com.example.guitarlegends.model.Instrument
 import com.example.guitarlegends.model.MultiplayerMode
-import com.example.guitarlegends.model.ParticipantConnectionState
 import com.example.guitarlegends.model.RoomStatus
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.flow.first
@@ -80,8 +79,7 @@ class MultiplayerCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 score = 24600,
                 combo = 51,
                 rockMeter = 0.92f,
-                starPowerActive = true,
-                connectionState = ParticipantConnectionState.ONLINE
+                starPowerActive = true
             )
         }
         assertTrue(progRes.isSuccess)
