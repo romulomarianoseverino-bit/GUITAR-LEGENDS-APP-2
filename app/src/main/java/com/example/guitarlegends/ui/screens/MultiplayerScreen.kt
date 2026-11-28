@@ -420,6 +420,7 @@ fun MultiplayerScreen(viewModel: GameViewModel) {
                                             color = when (activeRoom.statusEnum) {
                                                 RoomStatus.WAITING -> RockAccentGreen.copy(alpha = 0.25f)
                                                 RoomStatus.PLAYING -> RockAccentCyan.copy(alpha = 0.25f)
+                                                RoomStatus.PAUSED -> RockAccentGold.copy(alpha = 0.25f)
                                                 RoomStatus.FINISHED -> RockAccentGold.copy(alpha = 0.25f)
                                                 RoomStatus.CLOSED -> RockAccentRed.copy(alpha = 0.25f)
                                             },
