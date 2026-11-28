@@ -570,7 +570,7 @@ service cloud.firestore {
                          incoming().keys().hasAll([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'lastHeartbeatAt', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          incoming().keys().hasOnly([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
