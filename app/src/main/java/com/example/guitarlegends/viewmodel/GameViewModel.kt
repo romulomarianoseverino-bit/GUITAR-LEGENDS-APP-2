@@ -1969,6 +1969,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         gameLoopJob = viewModelScope.launch {
             val latencyOffset = _playerStats.value.audioLatencyOffsetMs
             var lastMultiplayerSyncMs = 0L
+            var multiplayerProgressSyncInFlight = false
 
             while (isActive && _currentScreen.value is GameScreen.Gameplay) {
                 if (!_isPaused.value) {
@@ -2011,17 +2012,43 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     }
 
                     val activeRoom = _multiplayerRoom.value
-                    if (activeRoom != null && (nowWallMs - lastMultiplayerSyncMs) >= 450L) {
-                        lastMultiplayerSyncMs = nowWallMs
-                        multiplayerRepo?.let { mRepo ->
+                    // Placar sincronizado em intervalo moderado; nunca acumula gravações concorrentes.
+                    // A presença é atualizada separadamente pelo heartbeat de 15 segundos.
+                    if (activeRoom != null &&
+                        (nowWallMs - lastMultiplayerSyncMs) >= 2_000L &&
+                        !multiplayerProgressSyncInFlight
+                    ) {
+                        val mRepo = multiplayerRepo
+                        if (mRepo != null) {
+                            lastMultiplayerSyncMs = nowWallMs
+                            multiplayerProgressSyncInFlight = true
                             launch {
-                                mRepo.updateParticipantProgress(
-                                    roomCode = activeRoom.roomCode,
-                                    score = _score.value,
-                                    combo = _combo.value,
-                                    rockMeter = _rockMeter.value,
-                                    starPowerActive = _isStarPowerActive.value
-                                )
+                                try {
+                                    val result = mRepo.updateParticipantProgress(
+                                        roomCode = activeRoom.roomCode,
+                                        score = _score.value,
+                                        combo = _combo.value,
+                                        rockMeter = _rockMeter.value,
+                                        starPowerActive = _isStarPowerActive.value
+                                    )
+                                    result.onFailure { error ->
+                                        if (_multiplayerRoom.value?.roomCode == activeRoom.roomCode) {
+                                            _multiplayerConnectionWarning.value =
+                                                multiplayerServiceErrorMessage(
+                                                    error,
+                                                    "Falha ao sincronizar o placar multiplayer."
+                                                )
+                                        }
+                                    }
+                                    if (result.isSuccess &&
+                                        _multiplayerRoom.value?.roomCode == activeRoom.roomCode &&
+                                        _multiplayerConnectionWarning.value == FIRESTORE_QUOTA_WARNING
+                                    ) {
+                                        _multiplayerConnectionWarning.value = null
+                                    }
+                                } finally {
+                                    multiplayerProgressSyncInFlight = false
+                                }
                             }
                         }
                     }
@@ -3009,7 +3036,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     }
                 }
             }.onFailure { err ->
-                _multiplayerError.value = err.message ?: "Não foi possível criar a sala multiplayer."
+                _multiplayerError.value = multiplayerServiceErrorMessage(
+                    err,
+                    "Não foi possível criar a sala multiplayer."
+                )
             }
             _isMultiplayerBusy.value = false
         }
@@ -3050,7 +3080,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 prepareRoomAudio(room)
                 startObservingMultiplayerRoom(room.roomCode)
             }.onFailure { err ->
-                _multiplayerError.value = err.message ?: "Não foi possível entrar na sala."
+                _multiplayerError.value = multiplayerServiceErrorMessage(
+                    err,
+                    "Não foi possível entrar na sala."
+                )
             }
             _isMultiplayerBusy.value = false
         }
@@ -3134,6 +3167,36 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         }
     }
 
+    /**
+     * Revalida a presença online ao retornar de outro aplicativo.
+     * Uma pausa do Android não deve ser confundida com saída voluntária da sala.
+     */
+    fun onAppForegrounded() {
+        refreshGamepadConnection()
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        viewModelScope.launch {
+            val heartbeat = repo.sendHeartbeat(room.roomCode, ParticipantConnectionState.ONLINE)
+            if (heartbeat.isSuccess) {
+                if (roomObserveJob?.isActive != true || participantsObserveJob?.isActive != true || strikesObserveJob?.isActive != true) {
+                    startObservingMultiplayerRoom(room.roomCode)
+                }
+                val warning = _multiplayerConnectionWarning.value.orEmpty()
+                if (warning.contains("Falha de rede") ||
+                    warning.contains("Conexão com a sala") ||
+                    warning.contains("Erro ao sincronizar participantes")
+                ) {
+                    _multiplayerConnectionWarning.value = null
+                }
+                refreshMultiplayerPeerHealth()
+            } else {
+                // O heartbeat pode falhar se o Android suspendeu a conexão de rede.
+                // Reentrar com o mesmo usuário recupera o documento sem criar outro jogador.
+                reconnectMultiplayerRoom()
+            }
+        }
+    }
+
     fun reconnectMultiplayerRoom() {
         val room = _multiplayerRoom.value
         val repo = multiplayerRepo ?: return
@@ -3206,6 +3269,11 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         if (staleNames.isNotEmpty()) {
             _multiplayerConnectionWarning.value =
                 "Conexão instável ou desconectado(s): ${staleNames.joinToString(", ")}"
+        } else if (_multiplayerConnectionWarning.value
+                ?.startsWith("Conexão instável ou desconectado(s):") == true
+        ) {
+            // Remove o aviso quando o heartbeat do participante voltar a chegar.
+            _multiplayerConnectionWarning.value = null
         }
     }
 
@@ -3309,8 +3377,10 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 if (res.isFailure) {
                     consecutiveFailures++
                     if (consecutiveFailures >= 2) {
-                        _multiplayerConnectionWarning.value =
+                        _multiplayerConnectionWarning.value = multiplayerServiceErrorMessage(
+                            res.exceptionOrNull(),
                             "Falha de rede na sala $roomCode. Verifique sua conexão ou toque em RECONECTAR."
+                        )
                     }
                 } else {
                     consecutiveFailures = 0
@@ -3321,7 +3391,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     }
                 }
                 refreshMultiplayerPeerHealth()
-                delay(4_000L)
+                delay(15_000L)
             }
         }
     }
