@@ -1,4 +1,5 @@
 name: Auditoria Guitar Legends — cópia 1.3 com melhorias
+# Reexecução após correção de compatibilidade dos testes Firebase Emulator.
 
 on:
   push:
