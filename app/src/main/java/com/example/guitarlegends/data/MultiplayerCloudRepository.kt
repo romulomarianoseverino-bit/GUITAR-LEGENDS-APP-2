@@ -597,6 +597,12 @@ class MultiplayerCloudRepository(
                 if (!room.memberUids.contains(uid)) {
                     throw IllegalStateException("Você não faz mais parte desta sala.")
                 }
+                val memberSnapshots = room.memberUids.map { memberUid ->
+                    tx.get(roomRef.collection("participants").document(memberUid))
+                }
+                val allOtherMembersOnline = memberSnapshots
+                    .filter { it.id != uid }
+                    .all { it.exists() && it.getString("connectionState") == ParticipantConnectionState.ONLINE.name }
 
                 tx.update(
                     participantRef,
@@ -609,7 +615,7 @@ class MultiplayerCloudRepository(
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
-                if (room.statusEnum == RoomStatus.PAUSED) {
+                if (room.statusEnum == RoomStatus.PAUSED && allOtherMembersOnline) {
                     tx.update(
                         roomRef,
                         mapOf(
