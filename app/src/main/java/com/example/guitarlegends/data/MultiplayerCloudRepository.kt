@@ -568,6 +568,53 @@ class MultiplayerCloudRepository(
     }
 
     /**
+     * Um membro conectado pode solicitar a pausa quando o heartbeat de outro
+     * participante PRONTO estiver vencido. A regra do Firestore confirma o
+     * prazo usando request.time e o timestamp de servidor do heartbeat.
+     */
+    suspend fun pauseRoomForStaleParticipant(roomCode: String, targetUid: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized"
+        return try {
+            val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
+            val targetRef = roomRef.collection("participants").document(targetUid)
+            firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val targetSnap = tx.get(targetRef)
+                if (!roomSnap.exists() || !targetSnap.exists()) {
+                    throw IllegalStateException("Sala ou participante não encontrado.")
+                }
+                val room = roomSnap.toObject(
+                    MultiplayerRoomCloud::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: throw IllegalStateException("Dados da sala inválidos.")
+                if (room.statusEnum != RoomStatus.PLAYING) return@runTransaction
+                if (!room.memberUids.contains(uid) || !room.memberUids.contains(targetUid)) {
+                    throw IllegalStateException("Participante não pertence à sala.")
+                }
+                if (targetSnap.getBoolean("ready") != true) return@runTransaction
+                val nickname = safeNickname(targetSnap.getString("nickname").orEmpty(), targetUid)
+                tx.update(
+                    roomRef,
+                    mapOf(
+                        "status" to RoomStatus.PAUSED.name,
+                        "pauseStartedAt" to FieldValue.serverTimestamp(),
+                        "pausedByUid" to targetUid,
+                        "pausedByNickname" to nickname,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }.await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    /**
      * Revalida a identidade e restaura a presença. Se a sala estiver PAUSED,
      * a transição de volta a PLAYING ocorre na mesma transação que ONLINE;
      * as regras do Firestore rejeitam a retomada após os 60 segundos.
