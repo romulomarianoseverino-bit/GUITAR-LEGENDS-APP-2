@@ -21,6 +21,19 @@ class MultiplayerPresenceGracePeriodTest {
     }
 
     @Test
+    fun readyParticipantUsesShortPresenceWindow() {
+        val participant = MultiplayerParticipantCloud(
+            userId = "player-ready",
+            ready = true,
+            connectionState = ParticipantConnectionState.ONLINE.name,
+            lastHeartbeatMs = 1_000L
+        )
+
+        assertFalse(participant.isStale(nowMs = 21_000L))
+        assertTrue(participant.isStale(nowMs = 21_001L))
+    }
+
+    @Test
     fun explicitDisconnectIsStillDetectedImmediately() {
         val participant = MultiplayerParticipantCloud(
             userId = "player-1",
