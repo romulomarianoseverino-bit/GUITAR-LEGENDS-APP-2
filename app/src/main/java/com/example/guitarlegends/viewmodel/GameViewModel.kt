@@ -34,6 +34,7 @@ import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.ceil
 
 data class PendingRoomAudioChoice(
     val transfer: MultiplayerAudioTransferCloud,
@@ -199,6 +200,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     private var participantsObserveJob: Job? = null
     private var strikesObserveJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var collectivePauseTimerJob: Job? = null
+    private var appInForeground: Boolean = true
+    private var wasCollectivelyPaused: Boolean = false
     private var hasAutoStartedRoomMatch: Boolean = false
 
     private val _friendRequests = MutableStateFlow<List<FriendRequestCloud>>(emptyList())
@@ -328,6 +332,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
 
     private val _isPaused = MutableStateFlow(false)
     val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
+
+    private val _collectivePauseSeconds = MutableStateFlow(60)
+    val collectivePauseSeconds: StateFlow<Int> = _collectivePauseSeconds.asStateFlow()
 
     var adaptiveEngine = AdaptiveEngine(selectedDifficulty, true)
         private set
@@ -2259,6 +2266,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     fun togglePause() {
+        if (_multiplayerRoom.value?.statusEnum == RoomStatus.PAUSED) return
         if (_isPaused.value) {
             _isPaused.value = false
             audioPlayer.play()
@@ -3171,14 +3179,44 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
     }
 
     /**
-     * Revalida a presença online ao retornar de outro aplicativo.
-     * Uma pausa do Android não deve ser confundida com saída voluntária da sala.
+     * O Android chamou onPause. Antes de PRONTO, a ausência é tolerada;
+     * depois de PRONTO, a presença é marcada e a sala pausa coletivamente.
      */
-    fun onAppForegrounded() {
+    fun onAppBackgrounded() {
+        appInForeground = false
         refreshGamepadConnection()
         val room = _multiplayerRoom.value ?: return
         val repo = multiplayerRepo ?: return
+        val uid = repo.currentUidOrNull() ?: return
+        val self = _multiplayerParticipants.value.firstOrNull { it.userId == uid }
+        if (self?.ready == true || room.statusEnum == RoomStatus.PLAYING) {
+            viewModelScope.launch {
+                repo.markDisconnectedAndPauseRoom(room.roomCode).onFailure { error ->
+                    _multiplayerConnectionWarning.value =
+                        multiplayerServiceErrorMessage(error, "Não foi possível registrar a desconexão na sala.")
+                }
+            }
+        }
+    }
+
+    /**
+     * Revalida a presença ao retornar. Somente quem estava desconectado
+     * tenta retomar; o repositório só libera PLAYING quando todos voltarem.
+     */
+    fun onAppForegrounded() {
+        appInForeground = true
+        refreshGamepadConnection()
+        val room = _multiplayerRoom.value ?: return
+        val repo = multiplayerRepo ?: return
+        val uid = repo.currentUidOrNull() ?: return
+        val self = _multiplayerParticipants.value.firstOrNull { it.userId == uid }
         viewModelScope.launch {
+            if (room.statusEnum == RoomStatus.PAUSED &&
+                (room.pausedByUid == uid || self?.connectionStateEnum == ParticipantConnectionState.DISCONNECTED)
+            ) {
+                reconnectMultiplayerRoom()
+                return@launch
+            }
             val heartbeat = repo.sendHeartbeat(room.roomCode, ParticipantConnectionState.ONLINE)
             if (heartbeat.isSuccess) {
                 if (roomObserveJob?.isActive != true || participantsObserveJob?.isActive != true || strikesObserveJob?.isActive != true) {
@@ -3193,8 +3231,6 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                 }
                 refreshMultiplayerPeerHealth()
             } else {
-                // O heartbeat pode falhar se o Android suspendeu a conexão de rede.
-                // Reentrar com o mesmo usuário recupera o documento sem criar outro jogador.
                 reconnectMultiplayerRoom()
             }
         }
@@ -3212,21 +3248,69 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             _isMultiplayerBusy.value = true
             _multiplayerError.value = null
             _multiplayerConnectionWarning.value = "Reconectando à sala ${room.roomCode}..."
-            repo.sendHeartbeat(room.roomCode, ParticipantConnectionState.RECONNECTING)
-            val res = repo.joinRoom(
-                rawCode = room.roomCode,
+            val res = repo.reconnectParticipant(
+                roomCode = room.roomCode,
                 nickname = effectiveMultiplayerNickname(),
                 instrument = selectedInstrument,
                 difficulty = selectedDifficulty
             )
             res.onSuccess { refreshed ->
                 _multiplayerRoom.value = refreshed
-                _multiplayerConnectionWarning.value = null
-                startObservingMultiplayerRoom(refreshed.roomCode)
+                if (refreshed.statusEnum == RoomStatus.PAUSED) {
+                    _multiplayerConnectionWarning.value =
+                        "Conexão recuperada. Aguardando os demais jogadores retornarem."
+                } else {
+                    _multiplayerConnectionWarning.value = null
+                    startObservingMultiplayerRoom(refreshed.roomCode)
+                }
             }.onFailure { err ->
-                _multiplayerConnectionWarning.value = "Falha ao reconectar: ${err.message}"
+                val expiration = repo.closeExpiredPausedRoom(room.roomCode)
+                if (expiration.getOrDefault(false)) {
+                    _multiplayerConnectionWarning.value = "O tempo de reconexão terminou. A sala foi encerrada."
+                } else {
+                    _multiplayerConnectionWarning.value = "Falha ao reconectar: ${err.message}"
+                }
             }
             _isMultiplayerBusy.value = false
+        }
+    }
+
+    private fun handleCollectivePauseState(room: MultiplayerRoomCloud) {
+        if (room.statusEnum == RoomStatus.PAUSED) {
+            wasCollectivelyPaused = true
+            if (!_isPaused.value) {
+                _isPaused.value = true
+                audioPlayer.pause()
+                gamepadManager.releaseAllActiveLanes { lane ->
+                    _activeFretLanes.value = _activeFretLanes.value - lane
+                }
+            }
+            if (collectivePauseTimerJob?.isActive != true) {
+                collectivePauseTimerJob?.cancel()
+                collectivePauseTimerJob = viewModelScope.launch {
+                    val startedAtMs = room.pauseStartedAt?.toDate()?.time ?: System.currentTimeMillis()
+                    val deadlineMs = startedAtMs + 60_000L
+                    while (isActive && _multiplayerRoom.value?.statusEnum == RoomStatus.PAUSED) {
+                        val remainingMs = deadlineMs - System.currentTimeMillis()
+                        val remainingSeconds = ceil(remainingMs.coerceAtLeast(0L) / 1000.0).toInt()
+                        _collectivePauseSeconds.value = remainingSeconds.coerceIn(0, 60)
+                        if (remainingMs <= 0L) {
+                            val result = multiplayerRepo?.closeExpiredPausedRoom(room.roomCode)
+                            if (result?.getOrDefault(false) == true) break
+                        }
+                        delay(250L)
+                    }
+                }
+            }
+        } else {
+            collectivePauseTimerJob?.cancel()
+            collectivePauseTimerJob = null
+            _collectivePauseSeconds.value = 60
+            if (wasCollectivelyPaused && room.statusEnum == RoomStatus.PLAYING) {
+                _isPaused.value = false
+                audioPlayer.resume()
+            }
+            wasCollectivelyPaused = false
         }
     }
 
@@ -3244,6 +3328,9 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         _isRoomAudioTransferLoading.value = false
         lastPreparedAudioTransferId = ""
         stopRoomObserversOnly()
+        collectivePauseTimerJob?.cancel()
+        collectivePauseTimerJob = null
+        wasCollectivelyPaused = false
         _multiplayerRoom.value = null
         _multiplayerParticipants.value = emptyList()
         _disconnectedPeerNicknames.value = emptyList()
@@ -3297,6 +3384,8 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         activeStrikeUntilMs = 0L
         heartbeatJob?.cancel()
         heartbeatJob = null
+        collectivePauseTimerJob?.cancel()
+        collectivePauseTimerJob = null
     }
 
     private fun startObservingMultiplayerRoom(roomCode: String) {
@@ -3309,7 +3398,14 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             try {
                 repo.observeRoom(roomCode).collect { room ->
                     if (room == null || room.statusEnum == RoomStatus.CLOSED) {
-                        val closedMsg = "A sala $roomCode foi encerrada pelo anfitrião."
+                        val wasPaused = _multiplayerRoom.value?.statusEnum == RoomStatus.PAUSED
+                        collectivePauseTimerJob?.cancel()
+                        collectivePauseTimerJob = null
+                        val closedMsg = if (wasPaused) {
+                            "O prazo de 60 segundos terminou. A sala foi encerrada para todos."
+                        } else {
+                            "A sala $roomCode foi encerrada."
+                        }
                         stopRoomObserversOnly()
                         _multiplayerRoom.value = null
                         _multiplayerParticipants.value = emptyList()
@@ -3334,6 +3430,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     }
 
                     _multiplayerRoom.value = room
+                    handleCollectivePauseState(room)
                     _multiplayerMode.value = room.modeEnum
                     _localStrikeEnabled.value = room.strikeEnabled
                     setCompetitiveMode(room.modeEnum == MultiplayerMode.BATTLE_1V1)
@@ -3376,7 +3473,15 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
         heartbeatJob = viewModelScope.launch {
             var consecutiveFailures = 0
             while (isActive && _multiplayerRoom.value?.roomCode == roomCode) {
-                val res = repo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE)
+                val activeRoom = _multiplayerRoom.value
+                val selfUid = repo.currentUidOrNull()
+                val selfReady = _multiplayerParticipants.value.firstOrNull { it.userId == selfUid }?.ready == true
+                val shouldSendHeartbeat = appInForeground && activeRoom?.statusEnum != RoomStatus.PAUSED
+                val res = if (shouldSendHeartbeat) {
+                    repo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE)
+                } else {
+                    Result.success(Unit)
+                }
                 if (res.isFailure) {
                     consecutiveFailures++
                     if (consecutiveFailures >= 2) {
@@ -3394,7 +3499,7 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                     }
                 }
                 refreshMultiplayerPeerHealth()
-                delay(15_000L)
+                delay(if (selfReady) 5_000L else 15_000L)
             }
         }
     }
