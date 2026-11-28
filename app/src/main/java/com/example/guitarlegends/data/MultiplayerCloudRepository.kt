@@ -174,6 +174,7 @@ class MultiplayerCloudRepository(
                         "difficulty" to difficulty.name,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -304,6 +305,7 @@ class MultiplayerCloudRepository(
                         "ready" to ready,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -496,6 +498,7 @@ class MultiplayerCloudRepository(
                     mapOf(
                         "connectionState" to connectionState.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -539,6 +542,7 @@ class MultiplayerCloudRepository(
                     mapOf(
                         "connectionState" to ParticipantConnectionState.DISCONNECTED.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -612,6 +616,7 @@ class MultiplayerCloudRepository(
                         "difficulty" to difficulty.name,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
