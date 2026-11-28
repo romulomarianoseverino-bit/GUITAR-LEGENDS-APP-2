@@ -272,7 +272,7 @@ service cloud.firestore {
              data.hostUid is string && data.hostUid.size() >= 1 && data.hostUid.size() <= 128 &&
              data.hostNickname is string && data.hostNickname.size() >= 2 && data.hostNickname.size() <= 24 &&
              data.mode is string && data.mode in ['BATTLE_1V1', 'BAND_COOP'] &&
-             data.status is string && data.status in ['WAITING', 'PLAYING', 'FINISHED', 'CLOSED'] &&
+             data.status is string && data.status in ['WAITING', 'PLAYING', 'PAUSED', 'FINISHED', 'CLOSED'] &&
              data.trackId is string && data.trackId.size() >= 1 && data.trackId.size() <= 128 &&
              data.trackTitle is string && data.trackTitle.size() >= 1 && data.trackTitle.size() <= 160 &&
              data.maxPlayers is int && data.maxPlayers >= 2 && data.maxPlayers <= 4 &&
@@ -284,7 +284,17 @@ service cloud.firestore {
              (!('audioTransferId' in data) || (data.audioTransferId is string && data.audioTransferId.size() <= 64)) &&
              (!('trackFingerprint' in data) || (data.trackFingerprint is string && (data.trackFingerprint == '' || data.trackFingerprint.size() == 64))) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
+             data.updatedAt is timestamp && data.updatedAt <= request.time &&
+             (
+               (data.status == 'PAUSED' &&
+                 data.pauseStartedAt is timestamp && data.pauseStartedAt <= request.time &&
+                 data.pausedByUid is string && data.pausedByUid in data.memberUids &&
+                 data.pausedByNickname is string && data.pausedByNickname.size() >= 2 && data.pausedByNickname.size() <= 24) ||
+               (data.status != 'PAUSED' &&
+                 !('pauseStartedAt' in data) &&
+                 !('pausedByUid' in data) &&
+                 !('pausedByNickname' in data))
+             );
     }
 
     function isValidMultiplayerParticipant(data, roomCode, participantUid) {
@@ -337,6 +347,8 @@ service cloud.firestore {
                          (
                            incoming().hostUid == existing().hostUid &&
                            existing().hostUid == request.auth.uid &&
+                           existing().status != 'PAUSED' &&
+                           incoming().status != 'PAUSED' &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
                              'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'strikeEnabled', 'audioTransferId', 'trackFingerprint', 'updatedAt'
                            ]) &&
@@ -349,6 +361,51 @@ service cloud.firestore {
                                (existing().status == 'WAITING' && incoming().status == 'WAITING')
                              )
                            )
+                         ) ||
+                         // Ação 1B: qualquer membro pode iniciar a pausa coletiva ao registrar sua própria desconexão.
+                         (
+                           existing().status == 'PLAYING' &&
+                           incoming().status == 'PAUSED' &&
+                           incoming().hostUid == existing().hostUid &&
+                           request.auth.uid in existing().memberUids &&
+                           incoming().memberUids == existing().memberUids &&
+                           incoming().pausedByUid == request.auth.uid &&
+                           incoming().pauseStartedAt == request.time &&
+                           incoming().pausedByNickname ==
+                             getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(request.auth.uid)).data.nickname &&
+                           getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(request.auth.uid)).data.connectionState == 'DISCONNECTED' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'status', 'pauseStartedAt', 'pausedByUid', 'pausedByNickname', 'updatedAt'
+                           ])
+                         ) ||
+                         // Ação 1C: reconexão válida retoma a partida antes do limite do servidor.
+                         (
+                           existing().status == 'PAUSED' &&
+                           incoming().status == 'PLAYING' &&
+                           incoming().hostUid == existing().hostUid &&
+                           request.auth.uid in existing().memberUids &&
+                           request.time < existing().pauseStartedAt + duration.value(60, 's') &&
+                           !('pauseStartedAt' in incoming()) &&
+                           !('pausedByUid' in incoming()) &&
+                           !('pausedByNickname' in incoming()) &&
+                           getAfter(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(request.auth.uid)).data.connectionState == 'ONLINE' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'status', 'pauseStartedAt', 'pausedByUid', 'pausedByNickname', 'updatedAt'
+                           ])
+                         ) ||
+                         // Ação 1D: após 60 segundos medidos pelo servidor, qualquer membro pode fechar a sala.
+                         (
+                           existing().status == 'PAUSED' &&
+                           incoming().status == 'CLOSED' &&
+                           incoming().hostUid == existing().hostUid &&
+                           request.auth.uid in existing().memberUids &&
+                           request.time >= existing().pauseStartedAt + duration.value(60, 's') &&
+                           !('pauseStartedAt' in incoming()) &&
+                           !('pausedByUid' in incoming()) &&
+                           !('pausedByNickname' in incoming()) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'status', 'pauseStartedAt', 'pausedByUid', 'pausedByNickname', 'updatedAt'
+                           ])
                          ) ||
                          // Ação 2: Convidado entra na sala em espera respeitando limite
                          (
