@@ -103,7 +103,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     LaunchedEffect(isCollectivePause) {
         while (isCollectivePause) {
             delay(4_500L)
-            reconnectPhraseIndex = (reconnectPhraseIndex + 1) % reconnectPhrases.size
+            reconnectPhraseIndex = reconnectPhrases.indices.filter { it != reconnectPhraseIndex }.random()
         }
     }
 
