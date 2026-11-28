@@ -137,8 +137,54 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 1800
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data
-          script: >-
-            set -eu; adb wait-for-device; BOOTED=""; for attempt in $(seq 1 90); do BOOTED="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"; if [ "$BOOTED" = "1" ]; then break; fi; sleep 2; done; if [ "$BOOTED" != "1" ]; then echo "Emulador não concluiu a inicialização."; adb devices -l; exit 1; fi; INSTALL_OK=""; for attempt in 1 2 3; do echo "Tentativa de instalação $attempt/3"; if adb install --no-streaming -r app/build/outputs/apk/release/app-release.apk; then INSTALL_OK="yes"; break; fi; adb devices -l; sleep 5; done; if [ "$INSTALL_OK" != "yes" ]; then adb logcat -d -t 500; exit 1; fi; adb logcat -c; adb shell monkey -p com.aistudio.applet.kpfcic 1; sleep 20; PID="$(adb shell pidof com.aistudio.applet.kpfcic 2>/dev/null || true)"; RUNTIME_LOG="$RUNNER_TEMP/android-runtime-errors.log"; adb logcat -d -t 2000 > "$RUNTIME_LOG"; echo "=== Registros AndroidRuntime e falhas ==="; grep -E -i "FATAL EXCEPTION|AndroidRuntime|Fatal signal|tombstone|Process: com.aistudio.applet.kpfcic|am_crash|am_anr" "$RUNTIME_LOG" | tail -n 200 || true; if [ -z "$PID" ]; then echo "::error::O processo do Guitar Legends não permaneceu ativo após 20 segundos."; exit 1; fi; if grep -q "FATAL EXCEPTION" "$RUNTIME_LOG"; then echo "::error::Foi detectada uma exceção fatal no Guitar Legends."; exit 1; fi; echo "Processo ativo após 20 segundos: $PID" de testes
+          script: |
+            import os, subprocess, sys, time
+            def run(args, check=True):
+                p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                print(p.stdout, flush=True)
+                if check and p.returncode:
+                    raise SystemExit(p.returncode)
+                return p.stdout.strip()
+            run(["adb", "wait-for-device"])
+            booted = False
+            for _ in range(90):
+                if run(["adb", "shell", "getprop", "sys.boot_completed"], False) == "1":
+                    booted = True
+                    break
+                time.sleep(2)
+            if not booted:
+                run(["adb", "devices", "-l"], False)
+                raise SystemExit("Emulador não concluiu a inicialização.")
+            apk = "app/build/outputs/apk/release/app-release.apk"
+            installed = False
+            for attempt in range(1, 4):
+                print(f"Tentativa de instalação {attempt}/3", flush=True)
+                if subprocess.run(["adb", "install", "--no-streaming", "-r", apk]).returncode == 0:
+                    installed = True
+                    break
+                run(["adb", "devices", "-l"], False)
+                time.sleep(5)
+            if not installed:
+                run(["adb", "logcat", "-d", "-t", "500"], False)
+                raise SystemExit("Não foi possível instalar o APK no emulador.")
+            run(["adb", "logcat", "-c"])
+            run(["adb", "shell", "monkey", "-p", "com.aistudio.applet.kpfcic", "1"])
+            time.sleep(20)
+            pid = run(["adb", "shell", "pidof", "com.aistudio.applet.kpfcic"], False)
+            log = run(["adb", "logcat", "-d", "-t", "2000"], False)
+            print("=== Registros de falha do Android ===", flush=True)
+            terms = ("FATAL EXCEPTION", "AndroidRuntime", "Fatal signal", "tombstone", "Process: com.aistudio.applet.kpfcic", "am_crash", "am_anr")
+            matches = [line for line in log.splitlines() if any(term.lower() in line.lower() for term in terms)]
+            print("\n".join(matches[-200:]), flush=True)
+            with open(os.path.join(os.environ["RUNNER_TEMP"], "android-runtime-errors.log"), "w") as out:
+                out.write(log)
+            if not pid:
+                raise SystemExit("O processo do Guitar Legends não permaneceu ativo após 20 segundos.")
+            if "FATAL EXCEPTION" in log:
+                raise SystemExit("Foi detectada uma exceção fatal no Guitar Legends.")
+            print(f"Processo ativo após 20 segundos: {pid}", flush=True)
+
+      - name: Publicar relatórios de testes
         if: always()
         uses: actions/upload-artifact@v4
         with:
