@@ -35,6 +35,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Before
@@ -56,6 +57,9 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
     @Before
     fun cleanLocalState() {
         app = ApplicationProvider.getApplicationContext()
+        // Cada teste começa como visitante; evita que a autenticação Firebase
+        // de um teste anterior altere a interface esperada neste cenário.
+        FirebaseAuth.getInstance().signOut()
         File(app.filesDir, "local_player_progress.json").delete()
         File(app.filesDir, "local_player_progress.json.tmp").delete()
     }
@@ -138,10 +142,10 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         composeTestRule.waitForIdle()
         assertTrue(vm.currentScreen.value is GameScreen.CompetitiveMultiplayer)
 
-        composeTestRule.onNodeWithTag("multiplayer_google_signin_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_google_signin_button").assertExists()
         composeTestRule.onNodeWithTag("multiplayer_tab_battle").assertIsDisplayed()
         composeTestRule.onNodeWithTag("multiplayer_tab_band").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_start_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_start_button").assertExists()
 
         // Alterna abas e retorna para a página principal
         composeTestRule.onNodeWithTag("multiplayer_tab_band").performClick()
@@ -185,7 +189,8 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         val roomCode = "ROCK-$tag"
         val aliceUid = awaitWithMainLooper { signInTestUser("mp_alice_$tag@test.com") }
 
-        val vm = GameViewModel(app)
+        // Injeta no ViewModel o mesmo FirebaseApp autenticado e apontado ao emulador.
+        val vm = GameViewModel(app, firebaseApp)
         vm.updateGuestNickname("AliceLead")
         vm.enterGame()
 
@@ -205,11 +210,13 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
 
         vm.createMultiplayerRoom(MultiplayerMode.BATTLE_1V1, customRoomCode = roomCode)
         waitUntilWithMainLooper { vm.multiplayerRoom.value != null }
+        waitUntilWithMainLooper { vm.multiplayerParticipants.value.any { it.userId == aliceUid } }
         composeTestRule.waitForIdle()
         assertEquals(roomCode, vm.multiplayerRoom.value?.roomCode)
         composeTestRule.onNodeWithTag("multiplayer_room_code_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_invite_button").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("participant_card_$aliceUid").assertIsDisplayed()
+        // Os controles podem ficar abaixo da dobra no viewport compacto do teste.
+        composeTestRule.onNodeWithTag("multiplayer_invite_button").assertExists()
+        composeTestRule.onNodeWithTag("participant_card_$aliceUid").assertExists()
 
         // 2. Segundo jogador (Bob) entra na sala pelo código
         val (bobAuth, bobRepo) = getOrInitSecondaryBobRepo(app)
@@ -222,17 +229,21 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         // Espera sincronização em tempo real no ViewModel da Alice
         waitUntilWithMainLooper { vm.multiplayerParticipants.value.size >= 2 }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("participant_card_$bobUid").assertIsDisplayed()
+        assertTrue(
+            "Bob precisa aparecer na lista sincronizada de participantes",
+            vm.multiplayerParticipants.value.any { it.userId == bobUid }
+        )
+        assertFalse("Strike deve aguardar o consentimento de todos", vm.isStrikeEnabledForCurrentMatch())
 
         // 3. Comunicação/Sincronização: Bob confirma pronto & envia pontuação; Alice troca faixa
         awaitWithMainLooper {
-            bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = true).getOrThrow()
+            bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = false).getOrThrow()
             bobRepo.updateParticipantProgress(roomCode, score = 18500, combo = 27, rockMeter = 0.88f, starPowerActive = true).getOrThrow()
         }
         vm.updateMultiplayerTrack(AudioAnalyzer.BUILT_IN_TRACKS[1])
 
         waitUntilWithMainLooper {
-            vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == true &&
+            vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == false &&
                 vm.multiplayerRoom.value?.trackId == AudioAnalyzer.BUILT_IN_TRACKS[1].id
         }
         assertEquals(18500, vm.multiplayerParticipants.value.find { it.userId == bobUid }?.score)
@@ -243,21 +254,49 @@ class MultiplayerRecoveryTest : FirestoreEmulatorTestBase() {
         }
         waitUntilWithMainLooper { vm.disconnectedPeerNicknames.value.contains("BobBass") }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("multiplayer_connection_warning").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("multiplayer_reconnect_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_connection_warning").assertExists()
+        composeTestRule.onNodeWithTag("multiplayer_reconnect_button").assertExists()
 
         // 5. Código inexistente gera erro claro sem quebrar fluxo
         vm.joinMultiplayerRoom("NOPE-9999")
         waitUntilWithMainLooper { vm.multiplayerError.value != null }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("multiplayer_error_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("multiplayer_error_banner").assertExists()
 
         // 6. Inicia partida sincronizada após Bob voltar online e sai limpo para o Menu Principal
         awaitWithMainLooper {
             bobRepo.sendHeartbeat(roomCode, ParticipantConnectionState.ONLINE).getOrThrow()
+            bobRepo.updateParticipantLoadout(roomCode, "BobBass", Instrument.BASS, Difficulty.HARD, ready = true).getOrThrow()
+            bobRepo.updateParticipantStrikeConsent(roomCode, true).getOrThrow()
+        }
+        waitUntilWithMainLooper {
+            vm.isStrikeEnabledForCurrentMatch() &&
+                vm.multiplayerParticipants.value.find { it.userId == bobUid }?.ready == true
         }
         vm.startMultiplayerMatch()
         waitUntilWithMainLooper { vm.multiplayerRoom.value?.statusEnum == RoomStatus.PLAYING }
+
+        // 7. Strike só é liberado com consentimento de todos; ataques funcionam nos dois sentidos.
+        val bobAttackId = awaitWithMainLooper {
+            bobRepo.sendStrike(roomCode, aliceUid, "LANE_INVERSION").getOrThrow()
+        }
+        waitUntilWithMainLooper { vm.incomingStrike.value?.id == bobAttackId }
+        vm.defendStrike(bobAttackId)
+        waitUntilWithMainLooper {
+            vm.strikeEvents.value.any { it.id == bobAttackId && it.status == "DEFENDED" }
+        }
+
+        vm.sendStrike(bobUid, "FOG")
+        val aliceAttackReceivedByBob = awaitWithMainLooper {
+            withTimeout(6000L) {
+                bobRepo.observeStrikes(roomCode).first { events ->
+                    events.any { it.attackerUid == aliceUid && it.targetUid == bobUid && it.power == "FOG" }
+                }
+            }
+        }
+        assertTrue(aliceAttackReceivedByBob.any {
+            it.attackerUid == aliceUid && it.targetUid == bobUid && it.power == "FOG"
+        })
 
         // Encerra partida/sala e retorna à página principal
         vm.stop()

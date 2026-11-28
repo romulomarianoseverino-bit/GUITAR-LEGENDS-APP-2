@@ -42,6 +42,8 @@ data class MultiplayerRoomCloud(
     val winnerUid: String = "",
     val inviteMessage: String = "",
     val strikeEnabled: Boolean = true,
+    val audioTransferId: String = "",
+    val trackFingerprint: String = "",
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     @ServerTimestamp
@@ -66,6 +68,8 @@ data class MultiplayerRoomCloud(
         "winnerUid" to winnerUid.take(128),
         "inviteMessage" to inviteMessage.take(160),
         "strikeEnabled" to strikeEnabled,
+        "audioTransferId" to audioTransferId.take(64),
+        "trackFingerprint" to trackFingerprint.take(64),
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )
@@ -87,6 +91,7 @@ data class MultiplayerParticipantCloud(
     val combo: Int = 0,
     val rockMeter: Double = 0.6,
     val starPowerActive: Boolean = false,
+    val strikeConsent: Boolean = false,
     val lastHeartbeatMs: Long = 0L,
     @ServerTimestamp
     val joinedAt: Timestamp? = null,
@@ -120,8 +125,24 @@ data class MultiplayerParticipantCloud(
         "combo" to combo.coerceIn(0, 100_000),
         "rockMeter" to rockMeter.coerceIn(0.0, 1.0),
         "starPowerActive" to starPowerActive,
+        "strikeConsent" to strikeConsent,
         "lastHeartbeatMs" to lastHeartbeatMs.coerceAtLeast(0L),
         "joinedAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )
 }
+
+
+@Keep
+@IgnoreExtraProperties
+data class StrikeEventCloud(
+    @DocumentId
+    val id: String = "",
+    val roomCode: String = "",
+    val attackerUid: String = "",
+    val targetUid: String = "",
+    val power: String = "LANE_INVERSION",
+    val createdAtMs: Long = 0L,
+    val status: String = "PENDING",
+    val resolvedAtMs: Long = 0L
+)

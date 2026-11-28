@@ -231,6 +231,17 @@ service cloud.firestore {
                          isValidProgressionEntry(incoming(), userId);
         allow update, delete: if false;
       }
+
+      // Lista de bloqueios privada, controlada exclusivamente pelo titular.
+      match /blocked/{blockedUid} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+          blockedUid != userId &&
+          incoming().keys().hasOnly(['userId', 'createdAtMs']) &&
+          incoming().userId == blockedUid &&
+          incoming().createdAtMs is int;
+        allow delete: if isOwner(userId);
+      }
     }
 
     // 2. Reserva de nicknames exclusivos (sem exposição de PII nem listagem aberta)
@@ -270,6 +281,8 @@ service cloud.firestore {
              data.winnerUid is string && data.winnerUid.size() <= 128 &&
              (!('inviteMessage' in data) || (data.inviteMessage is string && data.inviteMessage.size() <= 160)) &&
              (!('strikeEnabled' in data) || data.strikeEnabled is bool) &&
+             (!('audioTransferId' in data) || (data.audioTransferId is string && data.audioTransferId.size() <= 64)) &&
+             (!('trackFingerprint' in data) || (data.trackFingerprint is string && (data.trackFingerprint == '' || data.trackFingerprint.size() == 64))) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -286,6 +299,7 @@ service cloud.firestore {
              data.combo is int && data.combo >= 0 && data.combo <= 100000 &&
              data.rockMeter is number && data.rockMeter >= 0 && data.rockMeter <= 1 &&
              data.starPowerActive is bool &&
+             (!('strikeConsent' in data) || data.strikeConsent is bool) &&
              data.lastHeartbeatMs is int && data.lastHeartbeatMs >= 0 &&
              data.joinedAt is timestamp && data.joinedAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -308,7 +322,7 @@ service cloud.firestore {
                        incoming().keys().hasOnly([
                          'roomCode', 'hostUid', 'hostNickname', 'mode', 'status',
                          'trackId', 'trackTitle', 'maxPlayers', 'memberUids',
-                         'winnerUid', 'inviteMessage', 'strikeEnabled', 'createdAt', 'updatedAt'
+                         'winnerUid', 'inviteMessage', 'strikeEnabled', 'audioTransferId', 'trackFingerprint', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidMultiplayerRoom(incoming(), roomCode);
 
@@ -324,11 +338,16 @@ service cloud.firestore {
                            incoming().hostUid == existing().hostUid &&
                            existing().hostUid == request.auth.uid &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
-                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'strikeEnabled', 'updatedAt'
+                             'mode', 'status', 'trackId', 'trackTitle', 'maxPlayers', 'winnerUid', 'inviteMessage', 'strikeEnabled', 'audioTransferId', 'trackFingerprint', 'updatedAt'
                            ]) &&
                            (
-                             !('strikeEnabled' in incoming().diff(existing()).affectedKeys()) ||
-                             (existing().status == 'WAITING' && incoming().status == 'WAITING')
+                             (!('strikeEnabled' in incoming().diff(existing()).affectedKeys()) ||
+                               (existing().status == 'WAITING' && incoming().status == 'WAITING')) &&
+                             (
+                               (!('audioTransferId' in incoming().diff(existing()).affectedKeys()) &&
+                                !('trackFingerprint' in incoming().diff(existing()).affectedKeys())) ||
+                               (existing().status == 'WAITING' && incoming().status == 'WAITING')
+                             )
                            )
                          ) ||
                          // Ação 2: Convidado entra na sala em espera respeitando limite
@@ -366,6 +385,79 @@ service cloud.firestore {
 
       allow delete: if isSignedIn() && isValidRoomCode(roomCode) && existing().hostUid == request.auth.uid;
 
+      match /audio_transfers/{transferId} {
+        function roomExists() {
+          return exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode));
+        }
+        function isRoomMember() {
+          return isSignedIn() && roomExists() &&
+            request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids;
+        }
+        function isRoomHost() {
+          return isSignedIn() && roomExists() &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.hostUid == request.auth.uid;
+        }
+
+        allow get, list: if isRoomMember();
+        allow create: if isRoomHost() &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'WAITING' &&
+          incoming().keys().hasAll([
+            'roomCode', 'ownerUid', 'sourceTrackId', 'title', 'artist', 'fileName',
+            'mimeType', 'sizeBytes', 'sha256', 'chunkCount', 'status', 'createdAtMs', 'updatedAtMs'
+          ]) &&
+          incoming().keys().hasOnly([
+            'roomCode', 'ownerUid', 'sourceTrackId', 'title', 'artist', 'fileName',
+            'mimeType', 'sizeBytes', 'sha256', 'chunkCount', 'status', 'createdAtMs', 'updatedAtMs'
+          ]) &&
+          incoming().roomCode == roomCode &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().sourceTrackId is string && incoming().sourceTrackId.size() <= 128 &&
+          incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 160 &&
+          incoming().artist is string && incoming().artist.size() <= 120 &&
+          incoming().fileName is string && incoming().fileName.size() >= 1 && incoming().fileName.size() <= 100 &&
+          incoming().mimeType is string && incoming().mimeType.size() <= 80 &&
+          incoming().sizeBytes is int && incoming().sizeBytes >= 1 && incoming().sizeBytes <= 8388608 &&
+          incoming().sha256 is string && incoming().sha256.size() == 64 &&
+          incoming().chunkCount is int && incoming().chunkCount >= 1 && incoming().chunkCount <= 16 &&
+          incoming().status == 'UPLOADING' &&
+          incoming().createdAtMs is int && incoming().updatedAtMs is int;
+
+        allow update: if isRoomHost() &&
+          existing().ownerUid == request.auth.uid &&
+          existing().status == 'UPLOADING' &&
+          incoming().roomCode == existing().roomCode &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().sourceTrackId == existing().sourceTrackId &&
+          incoming().title == existing().title &&
+          incoming().artist == existing().artist &&
+          incoming().fileName == existing().fileName &&
+          incoming().mimeType == existing().mimeType &&
+          incoming().sizeBytes == existing().sizeBytes &&
+          incoming().sha256 == existing().sha256 &&
+          incoming().chunkCount == existing().chunkCount &&
+          incoming().status in ['READY', 'ERROR'] &&
+          incoming().updatedAtMs is int &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAtMs']);
+
+        allow delete: if isRoomHost() &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status in ['FINISHED', 'CLOSED'];
+
+        match /chunks/{chunkId} {
+          allow get, list: if isRoomMember();
+          allow create: if isRoomHost() &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/audio_transfers/$(transferId)).data.status == 'UPLOADING' &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/audio_transfers/$(transferId)).data.ownerUid == request.auth.uid &&
+            incoming().keys().hasAll(['index', 'data', 'byteCount']) &&
+            incoming().keys().hasOnly(['index', 'data', 'byteCount']) &&
+            incoming().index is int && incoming().index >= 0 && incoming().index < 16 &&
+            incoming().data is string && incoming().data.size() <= 700000 &&
+            incoming().byteCount is int && incoming().byteCount >= 1 && incoming().byteCount <= 524288;
+          allow update: if false;
+          allow delete: if isRoomHost() &&
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status in ['FINISHED', 'CLOSED'];
+        }
+      }
+
       match /participants/{participantUid} {
         allow get, list: if isSignedIn() &&
                            isValidRoomCode(roomCode) &&
@@ -389,7 +481,7 @@ service cloud.firestore {
                          incoming().keys().hasOnly([
                            'userId', 'roomCode', 'nickname', 'instrument', 'difficulty',
                            'ready', 'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'joinedAt', 'updatedAt'
                          ]) &&
                          isValidMultiplayerParticipant(incoming(), roomCode, participantUid);
 
@@ -404,8 +496,10 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'nickname', 'instrument', 'difficulty', 'ready',
                            'connectionState', 'score', 'combo', 'rockMeter',
-                           'starPowerActive', 'lastHeartbeatMs', 'updatedAt'
-                         ]);
+                           'starPowerActive', 'strikeConsent', 'lastHeartbeatMs', 'updatedAt'
+                         ]) &&
+                         (!('strikeConsent' in incoming().diff(existing()).affectedKeys()) ||
+                           get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'WAITING');
 
         allow delete: if isSignedIn() &&
                          isValidRoomCode(roomCode) &&
@@ -415,6 +509,160 @@ service cloud.firestore {
                             get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.hostUid == request.auth.uid)
                          );
       }
+
+      function allStrikeParticipantsConsented() {
+        let room = get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data;
+        return room.memberUids.size() >= 2 &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[0])).data.strikeConsent == true &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[1])).data.strikeConsent == true &&
+          (room.memberUids.size() < 3 ||
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[2])).data.strikeConsent == true) &&
+          (room.memberUids.size() < 4 ||
+            get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)/participants/$(room.memberUids[3])).data.strikeConsent == true);
+      }
+
+      match /strikes/{strikeId} {
+        allow get, list: if isSignedIn() &&
+          exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+          request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids;
+
+        allow create: if isSignedIn() &&
+          isValidRoomCode(roomCode) &&
+          exists(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)) &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.status == 'PLAYING' &&
+          get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.strikeEnabled == true &&
+          allStrikeParticipantsConsented() &&
+          incoming().keys().hasOnly(['roomCode', 'attackerUid', 'targetUid', 'power', 'createdAtMs', 'status', 'resolvedAtMs']) &&
+          incoming().roomCode == roomCode &&
+          incoming().attackerUid == request.auth.uid &&
+          incoming().targetUid is string &&
+          incoming().targetUid in get(/databases/$(database)/documents/multiplayer_rooms/$(roomCode)).data.memberUids &&
+          incoming().targetUid != request.auth.uid &&
+          incoming().power in ['LANE_INVERSION', 'FOG'] &&
+          incoming().createdAtMs is int &&
+          incoming().status == 'PENDING' &&
+          incoming().resolvedAtMs == 0;
+
+        allow update: if isSignedIn() &&
+          existing().targetUid == request.auth.uid &&
+          existing().status == 'PENDING' &&
+          incoming().roomCode == existing().roomCode &&
+          incoming().attackerUid == existing().attackerUid &&
+          incoming().targetUid == existing().targetUid &&
+          incoming().power == existing().power &&
+          incoming().createdAtMs == existing().createdAtMs &&
+          incoming().status in ['DEFENDED', 'APPLIED'] &&
+          incoming().resolvedAtMs is int &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolvedAtMs']);
+
+        allow delete: if false;
+      }
+    }
+
+    function friendPairId(a, b) {
+      return a < b ? a + '__' + b : b + '__' + a;
+    }
+
+    function areFriends(a, b) {
+      return exists(/databases/$(database)/documents/friend_requests/$(friendPairId(a, b))) &&
+        get(/databases/$(database)/documents/friend_requests/$(friendPairId(a, b))).data.status == 'ACCEPTED';
+    }
+
+    function isBlocked(a, b) {
+      return exists(/databases/$(database)/documents/users/$(a)/blocked/$(b)) ||
+        exists(/databases/$(database)/documents/users/$(b)/blocked/$(a));
+    }
+
+    match /friend_requests/{requestId} {
+      allow get, list: if isSignedIn() &&
+        (resource == null || resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        incoming().keys().hasAll([
+          'senderUid', 'recipientUid', 'senderNickname', 'recipientNickname',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().keys().hasOnly([
+          'senderUid', 'recipientUid', 'senderNickname', 'recipientNickname',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().senderUid == request.auth.uid &&
+        incoming().recipientUid is string &&
+        incoming().recipientUid != request.auth.uid &&
+        requestId == friendPairId(incoming().senderUid, incoming().recipientUid) &&
+        incoming().senderNickname is string && incoming().senderNickname.size() <= 24 &&
+        incoming().recipientNickname is string && incoming().recipientNickname.size() <= 24 &&
+        incoming().status == 'PENDING' &&
+        incoming().createdAtMs is int && incoming().updatedAtMs is int &&
+        !isBlocked(incoming().senderUid, incoming().recipientUid);
+      allow update: if isSignedIn() &&
+        requestId == friendPairId(existing().senderUid, existing().recipientUid) &&
+        incoming().senderUid == existing().senderUid &&
+        incoming().recipientUid == existing().recipientUid &&
+        incoming().senderNickname == existing().senderNickname &&
+        incoming().recipientNickname == existing().recipientNickname &&
+        incoming().createdAtMs is int &&
+        incoming().updatedAtMs is int &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'createdAtMs', 'updatedAtMs']) &&
+        !isBlocked(incoming().senderUid, incoming().recipientUid) &&
+        (
+          (existing().recipientUid == request.auth.uid &&
+            existing().status == 'PENDING' &&
+            incoming().status in ['ACCEPTED', 'DECLINED']) ||
+          (existing().senderUid == request.auth.uid &&
+            existing().status == 'DECLINED' &&
+            incoming().status == 'PENDING')
+        );
+      allow delete: if isSignedIn() &&
+        (existing().senderUid == request.auth.uid || existing().recipientUid == request.auth.uid);
+    }
+
+    match /user_presence/{userId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isOwner(userId) &&
+        incoming().keys().hasOnly(['userId', 'online', 'allowRoomInvites', 'lastSeenAtMs']) &&
+        incoming().userId == userId &&
+        incoming().online is bool &&
+        incoming().allowRoomInvites is bool &&
+        incoming().lastSeenAtMs is int;
+      allow delete: if isOwner(userId);
+    }
+
+    match /room_invites/{inviteId} {
+      allow get, list: if isSignedIn() &&
+        (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        incoming().keys().hasAll([
+          'senderUid', 'recipientUid', 'senderNickname', 'roomCode',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().keys().hasOnly([
+          'senderUid', 'recipientUid', 'senderNickname', 'roomCode',
+          'status', 'createdAtMs', 'updatedAtMs'
+        ]) &&
+        incoming().senderUid == request.auth.uid &&
+        incoming().recipientUid is string &&
+        incoming().recipientUid != request.auth.uid &&
+        incoming().senderNickname is string && incoming().senderNickname.size() <= 24 &&
+        incoming().roomCode is string && incoming().roomCode.size() >= 4 && incoming().roomCode.size() <= 24 &&
+        incoming().status == 'PENDING' &&
+        incoming().createdAtMs is int && incoming().updatedAtMs is int &&
+        exists(/databases/$(database)/documents/multiplayer_rooms/$(incoming().roomCode)) &&
+        request.auth.uid in get(/databases/$(database)/documents/multiplayer_rooms/$(incoming().roomCode)).data.memberUids &&
+        areFriends(request.auth.uid, incoming().recipientUid) &&
+        !isBlocked(request.auth.uid, incoming().recipientUid);
+      allow update: if isSignedIn() &&
+        existing().recipientUid == request.auth.uid &&
+        existing().status == 'PENDING' &&
+        incoming().senderUid == existing().senderUid &&
+        incoming().recipientUid == existing().recipientUid &&
+        incoming().roomCode == existing().roomCode &&
+        incoming().senderNickname == existing().senderNickname &&
+        incoming().createdAtMs == existing().createdAtMs &&
+        incoming().status in ['ACCEPTED', 'DECLINED'] &&
+        incoming().updatedAtMs is int &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAtMs']);
+      allow delete: if isSignedIn() &&
+        (existing().senderUid == request.auth.uid || existing().recipientUid == request.auth.uid);
     }
   }
 }

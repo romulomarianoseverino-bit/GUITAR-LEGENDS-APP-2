@@ -72,6 +72,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val rockMeter by viewModel.rockMeter.collectAsState()
     val starPowerEnergy by viewModel.starPowerEnergy.collectAsState()
     val isStarPowerActive by viewModel.isStarPowerActive.collectAsState()
+    val incomingStrike by viewModel.incomingStrike.collectAsState()
+    val activeStrikePower by viewModel.activeStrikePower.collectAsState()
     val lastHitRating by viewModel.lastHitRating.collectAsState()
     val activeFretLanes by viewModel.activeFretLanes.collectAsState()
     val activePickFlashes by viewModel.activePickFlashes.collectAsState()
@@ -89,7 +91,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val difficulty = viewModel.selectedDifficulty
     val instrument = viewModel.selectedInstrument
     val numLanes = difficulty.lanesUsed
-    val strikeEnabled = mpRoom?.strikeEnabled ?: localStrikeEnabled
+    val strikeRequested = mpRoom?.strikeEnabled ?: localStrikeEnabled
+    val strikeEnabled = strikeRequested &&
+        (mpRoom == null || (mpParticipants.size >= 2 && mpParticipants.all { it.strikeConsent }))
     val isDualMultiplayer = mpRoom != null || isLocalMultiplayerMatch
 
     val selfUid = viewModel.currentMultiplayerUid()
@@ -100,12 +104,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val partnerDisplayName = partnerParticipant?.nickname
         ?: if (mpMode == MultiplayerMode.BATTLE_1V1) "Rival 1v1" else "Parceiro Banda"
 
-    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, strikeEnabled, isDualMultiplayer) {
+    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, isDualMultiplayer) {
         if (!isDualMultiplayer) emptyList()
-        else {
-            val generated = AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
-            if (strikeEnabled) generated else generated.map { it.copy(isStarPower = false) }
-        }
+        else AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
     }
     var partnerScoreLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
     var partnerComboLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
@@ -404,6 +405,54 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             }
         }
 
+        if (incomingStrike != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp)
+                    .testTag("strike_incoming_panel"),
+                color = Color(0xEE2B1020),
+                shape = RoundedCornerShape(12.dp),
+                border = ButtonDefaults.outlinedButtonBorder.copy(
+                    brush = Brush.horizontalGradient(listOf(RockAccentRed, RockAccentGold))
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = if (incomingStrike!!.power == "LANE_INVERSION") "ATAQUE: INVERSÃO" else "ATAQUE: NEBLINA",
+                        color = Color.White,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp
+                    )
+                    Button(
+                        onClick = { viewModel.defendStrike(incomingStrike!!.id) },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                        modifier = Modifier.testTag("strike_defend_button")
+                    ) {
+                        Text("DEFENDER", fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+        }
+        if (activeStrikePower != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp)
+                    .testTag("strike_active_effect"),
+                color = Color(0xDD301020),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = if (activeStrikePower == "LANE_INVERSION") "STRIKE ATIVO: PISTAS INVERTIDAS" else "STRIKE ATIVO: NEBLINA",
+                    color = RockAccentGold,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+
         // Dual Multiplayer Top Highway Player Headers
         if (isDualMultiplayer) {
             Row(
@@ -454,7 +503,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             VocalMelodyPitchBar(
                 currentTimeMs = currentPosMs,
                 activeNotes = activeNotes,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
+                isStarPowerActive = isStarPowerActive,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = if (isDualMultiplayer) 74.dp else 42.dp)
@@ -476,8 +525,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 isStarPowerActive = isStarPowerActive
             )
 
-            // Star Power Activator Button (exibido apenas quando Strike está ativo)
-            if (strikeEnabled) {
+            // Star Power é individual e independente do Sistema de Strike.
+            run {
                 val canActivateStarPower = starPowerEnergy >= 0.5f && !isStarPowerActive
                 Button(
                     onClick = { viewModel.activateStarPower() },
@@ -513,6 +562,27 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     )
                 }
             }
+
+            if (strikeEnabled && mpRoom?.statusEnum == com.example.guitarlegends.model.RoomStatus.PLAYING &&
+                partnerParticipant != null
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.sendStrike(partnerParticipant.userId, "LANE_INVERSION") },
+                    modifier = Modifier.width(126.dp).testTag("strike_attack_inversion_button"),
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RockAccentCyan)
+                ) {
+                    Text("STRIKE: INVERSÃO", fontSize = 8.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = { viewModel.sendStrike(partnerParticipant.userId, "FOG") },
+                    modifier = Modifier.width(126.dp).testTag("strike_attack_fog_button"),
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RockAccentGold)
+                ) {
+                    Text("STRIKE: NEBLINA", fontSize = 8.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                }
+            }
         }
 
         // Right HUD: Hit Rating feedback + Classic Semicircular Rock Meter & 5 Star Power Vacuum Tubes
@@ -544,9 +614,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
 
             AnalogRockMeterWithTubes(
                 rockMeter = rockMeter,
-                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
-                showStarPowerTubes = strikeEnabled
+                starPowerEnergy = starPowerEnergy,
+                isStarPowerActive = isStarPowerActive,
+                showStarPowerTubes = true
             )
         }
 
