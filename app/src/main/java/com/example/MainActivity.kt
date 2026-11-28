@@ -69,12 +69,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.refreshGamepadConnection()
+        viewModel.onAppForegrounded()
     }
 
     override fun onPause() {
         super.onPause()
         viewModel.audioPlayer.pause()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.onAppBackgrounded()
     }
 
     override fun onDestroy() {

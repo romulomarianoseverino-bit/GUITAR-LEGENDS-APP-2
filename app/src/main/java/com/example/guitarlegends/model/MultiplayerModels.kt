@@ -15,6 +15,7 @@ enum class MultiplayerMode(val displayName: String, val maxPlayers: Int) {
 enum class RoomStatus(val label: String) {
     WAITING("Aguardando Jogadores"),
     PLAYING("Show em Andamento"),
+    PAUSED("Aguardando Reconexão"),
     FINISHED("Show Finalizado"),
     CLOSED("Sala Encerrada")
 }
@@ -42,6 +43,11 @@ data class MultiplayerRoomCloud(
     val winnerUid: String = "",
     val inviteMessage: String = "",
     val strikeEnabled: Boolean = true,
+    val audioTransferId: String = "",
+    val trackFingerprint: String = "",
+    val pauseStartedAt: Timestamp? = null,
+    val pausedByUid: String = "",
+    val pausedByNickname: String = "",
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     @ServerTimestamp
@@ -66,6 +72,8 @@ data class MultiplayerRoomCloud(
         "winnerUid" to winnerUid.take(128),
         "inviteMessage" to inviteMessage.take(160),
         "strikeEnabled" to strikeEnabled,
+        "audioTransferId" to audioTransferId.take(64),
+        "trackFingerprint" to trackFingerprint.take(64),
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )
@@ -87,7 +95,10 @@ data class MultiplayerParticipantCloud(
     val combo: Int = 0,
     val rockMeter: Double = 0.6,
     val starPowerActive: Boolean = false,
+    val strikeConsent: Boolean = false,
     val lastHeartbeatMs: Long = 0L,
+    @ServerTimestamp
+    val lastHeartbeatAt: Timestamp? = null,
     @ServerTimestamp
     val joinedAt: Timestamp? = null,
     @ServerTimestamp
@@ -103,9 +114,13 @@ data class MultiplayerParticipantCloud(
         get() = runCatching { ParticipantConnectionState.valueOf(connectionState) }
             .getOrDefault(ParticipantConnectionState.ONLINE)
 
-    fun isStale(nowMs: Long, thresholdMs: Long = 14_000L): Boolean {
+    // Antes de PRONTO, a sala tolera até 2 minutos de ausência.
+    // Depois de PRONTO, a tolerância é curta; uma saída explícita é imediata.
+    fun isStale(nowMs: Long, thresholdMs: Long? = null): Boolean {
         if (connectionStateEnum == ParticipantConnectionState.DISCONNECTED) return true
-        return lastHeartbeatMs > 0L && (nowMs - lastHeartbeatMs) > thresholdMs
+        val allowedMs = thresholdMs ?: if (ready) 20_000L else 120_000L
+        val heartbeatTime = lastHeartbeatAt?.toDate()?.time ?: lastHeartbeatMs
+        return heartbeatTime > 0L && (nowMs - heartbeatTime) > allowedMs
     }
 
     fun toCreateMap(): Map<String, Any?> = mapOf(
@@ -120,8 +135,25 @@ data class MultiplayerParticipantCloud(
         "combo" to combo.coerceIn(0, 100_000),
         "rockMeter" to rockMeter.coerceIn(0.0, 1.0),
         "starPowerActive" to starPowerActive,
+        "strikeConsent" to strikeConsent,
         "lastHeartbeatMs" to lastHeartbeatMs.coerceAtLeast(0L),
+        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
         "joinedAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )
 }
+
+
+@Keep
+@IgnoreExtraProperties
+data class StrikeEventCloud(
+    @DocumentId
+    val id: String = "",
+    val roomCode: String = "",
+    val attackerUid: String = "",
+    val targetUid: String = "",
+    val power: String = "LANE_INVERSION",
+    val createdAtMs: Long = 0L,
+    val status: String = "PENDING",
+    val resolvedAtMs: Long = 0L
+)

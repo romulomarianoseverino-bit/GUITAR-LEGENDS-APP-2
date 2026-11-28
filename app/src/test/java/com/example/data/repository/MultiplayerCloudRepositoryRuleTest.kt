@@ -6,7 +6,6 @@ import com.example.guitarlegends.data.MultiplayerCloudRepository
 import com.example.guitarlegends.model.Difficulty
 import com.example.guitarlegends.model.Instrument
 import com.example.guitarlegends.model.MultiplayerMode
-import com.example.guitarlegends.model.ParticipantConnectionState
 import com.example.guitarlegends.model.RoomStatus
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.flow.first
@@ -80,8 +79,7 @@ class MultiplayerCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 score = 24600,
                 combo = 51,
                 rockMeter = 0.92f,
-                starPowerActive = true,
-                connectionState = ParticipantConnectionState.ONLINE
+                starPowerActive = true
             )
         }
         assertTrue(progRes.isSuccess)
@@ -166,6 +164,63 @@ class MultiplayerCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
         withTimeout(DEFAULT_TIMEOUT_MS) { repo.leaveOrCloseRoom(roomCode).getOrThrow() }
         val closedSnap = withTimeout(FLOW_TIMEOUT_MS) { repo.observeRoom(roomCode).first() }
         assertEquals(RoomStatus.CLOSED, closedSnap?.statusEnum)
+    }
+
+    @Test
+    fun collectivePauseAndReconnectAreAtomicAndResumeOnlyAfterParticipantReturns() = runBlocking {
+        val tag = uniqueSuffix()
+        val roomCode = "PAUSE-$tag"
+        val hostUid = signInTestUser("pause_host_$tag@test.com")
+        val repo = MultiplayerCloudRepository(firestore, auth)
+
+        repo.createRoom(
+            mode = MultiplayerMode.BATTLE_1V1,
+            track = AudioAnalyzer.BUILT_IN_TRACKS[0],
+            nickname = "PauseHost",
+            instrument = Instrument.GUITAR,
+            difficulty = Difficulty.MEDIUM,
+            customRoomCode = roomCode
+        ).getOrThrow()
+
+        val guestUid = signInTestUser("pause_guest_$tag@test.com")
+        repo.joinRoom(roomCode, "PauseGuest", Instrument.BASS, Difficulty.HARD).getOrThrow()
+
+        signInTestUser("pause_host_$tag@test.com")
+        repo.updateRoomHostConfig(
+            roomCode = roomCode,
+            mode = MultiplayerMode.BATTLE_1V1,
+            track = AudioAnalyzer.BUILT_IN_TRACKS[0],
+            status = RoomStatus.PLAYING
+        ).getOrThrow()
+
+        signInTestUser("pause_guest_$tag@test.com")
+        repo.markDisconnectedAndPauseRoom(roomCode).getOrThrow()
+
+        signInTestUser("pause_host_$tag@test.com")
+        val pausedRoom = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeRoom(roomCode).first { it?.statusEnum == RoomStatus.PAUSED }
+        }
+        assertEquals(guestUid, pausedRoom?.pausedByUid)
+        assertEquals("PauseGuest", pausedRoom?.pausedByNickname)
+        assertNotNull(pausedRoom?.pauseStartedAt)
+
+        signInTestUser("pause_guest_$tag@test.com")
+        val reconnected = repo.reconnectParticipant(
+            roomCode = roomCode,
+            nickname = "PauseGuest",
+            instrument = Instrument.BASS,
+            difficulty = Difficulty.HARD
+        ).getOrThrow()
+        assertEquals(RoomStatus.PLAYING, reconnected.statusEnum)
+        assertEquals("", reconnected.pausedByUid)
+        assertNull(reconnected.pauseStartedAt)
+
+        signInTestUser("pause_host_$tag@test.com")
+        val resumedRoom = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeRoom(roomCode).first { it?.statusEnum == RoomStatus.PLAYING }
+        }
+        assertEquals(RoomStatus.PLAYING, resumedRoom?.statusEnum)
+        assertTrue(resumedRoom?.memberUids?.containsAll(listOf(hostUid, guestUid)) == true)
     }
 
     private companion object {

@@ -51,11 +51,13 @@ import com.example.guitarlegends.engine.drawHighway
 import com.example.guitarlegends.model.ControlMode
 import com.example.guitarlegends.model.Instrument
 import com.example.guitarlegends.model.MultiplayerMode
+import com.example.guitarlegends.model.RoomStatus
 import com.example.guitarlegends.ui.components.*
 import com.example.guitarlegends.viewmodel.GameScreen
 import com.example.guitarlegends.viewmodel.GameViewModel
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -72,6 +74,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val rockMeter by viewModel.rockMeter.collectAsState()
     val starPowerEnergy by viewModel.starPowerEnergy.collectAsState()
     val isStarPowerActive by viewModel.isStarPowerActive.collectAsState()
+    val incomingStrike by viewModel.incomingStrike.collectAsState()
+    val activeStrikePower by viewModel.activeStrikePower.collectAsState()
     val lastHitRating by viewModel.lastHitRating.collectAsState()
     val activeFretLanes by viewModel.activeFretLanes.collectAsState()
     val activePickFlashes by viewModel.activePickFlashes.collectAsState()
@@ -84,12 +88,32 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val localStrikeEnabled by viewModel.localStrikeEnabled.collectAsState()
     val isLocalMultiplayerMatch by viewModel.isLocalMultiplayerMatch.collectAsState()
     val mpMode by viewModel.multiplayerMode.collectAsState()
+    val collectivePauseSeconds by viewModel.collectivePauseSeconds.collectAsState()
+    val isCollectivePause = mpRoom?.statusEnum == RoomStatus.PAUSED
+    val reconnectPhrases = remember {
+        listOf(
+            "O show ainda não acabou. A próxima música espera por você!",
+            "Até as maiores bandas precisam de uma pausa entre os acordes.",
+            "Aumente o volume: estamos preparando a volta ao palco.",
+            "Uma lenda nunca abandona o palco. Estamos aguardando!",
+            "Segure o ritmo: a banda vai tocar junta novamente."
+        )
+    }
+    var reconnectPhraseIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(isCollectivePause) {
+        while (isCollectivePause) {
+            delay(4_500L)
+            reconnectPhraseIndex = reconnectPhrases.indices.filter { it != reconnectPhraseIndex }.random()
+        }
+    }
 
     val track = viewModel.selectedTrack
     val difficulty = viewModel.selectedDifficulty
     val instrument = viewModel.selectedInstrument
     val numLanes = difficulty.lanesUsed
-    val strikeEnabled = mpRoom?.strikeEnabled ?: localStrikeEnabled
+    val strikeRequested = mpRoom?.strikeEnabled ?: localStrikeEnabled
+    val strikeEnabled = strikeRequested &&
+        (mpRoom == null || (mpParticipants.size >= 2 && mpParticipants.all { it.strikeConsent }))
     val isDualMultiplayer = mpRoom != null || isLocalMultiplayerMatch
 
     val selfUid = viewModel.currentMultiplayerUid()
@@ -100,12 +124,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
     val partnerDisplayName = partnerParticipant?.nickname
         ?: if (mpMode == MultiplayerMode.BATTLE_1V1) "Rival 1v1" else "Parceiro Banda"
 
-    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, strikeEnabled, isDualMultiplayer) {
+    val partnerNotes = remember(track.id, partnerInstrument, partnerDifficulty, isDualMultiplayer) {
         if (!isDualMultiplayer) emptyList()
-        else {
-            val generated = AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
-            if (strikeEnabled) generated else generated.map { it.copy(isStarPower = false) }
-        }
+        else AudioAnalyzer.generateChart(track, partnerInstrument, partnerDifficulty)
     }
     var partnerScoreLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
     var partnerComboLocal by remember(track.id, isDualMultiplayer) { mutableIntStateOf(0) }
@@ -404,6 +425,54 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             }
         }
 
+        if (incomingStrike != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp)
+                    .testTag("strike_incoming_panel"),
+                color = Color(0xEE2B1020),
+                shape = RoundedCornerShape(12.dp),
+                border = ButtonDefaults.outlinedButtonBorder.copy(
+                    brush = Brush.horizontalGradient(listOf(RockAccentRed, RockAccentGold))
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = if (incomingStrike!!.power == "LANE_INVERSION") "ATAQUE: INVERSÃO" else "ATAQUE: NEBLINA",
+                        color = Color.White,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp
+                    )
+                    Button(
+                        onClick = { viewModel.defendStrike(incomingStrike!!.id) },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp),
+                        modifier = Modifier.testTag("strike_defend_button")
+                    ) {
+                        Text("DEFENDER", fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+        }
+        if (activeStrikePower != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp)
+                    .testTag("strike_active_effect"),
+                color = Color(0xDD301020),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = if (activeStrikePower == "LANE_INVERSION") "STRIKE ATIVO: PISTAS INVERTIDAS" else "STRIKE ATIVO: NEBLINA",
+                    color = RockAccentGold,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+
         // Dual Multiplayer Top Highway Player Headers
         if (isDualMultiplayer) {
             Row(
@@ -454,7 +523,7 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             VocalMelodyPitchBar(
                 currentTimeMs = currentPosMs,
                 activeNotes = activeNotes,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
+                isStarPowerActive = isStarPowerActive,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = if (isDualMultiplayer) 74.dp else 42.dp)
@@ -476,8 +545,8 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                 isStarPowerActive = isStarPowerActive
             )
 
-            // Star Power Activator Button (exibido apenas quando Strike está ativo)
-            if (strikeEnabled) {
+            // Star Power é individual e independente do Sistema de Strike.
+            run {
                 val canActivateStarPower = starPowerEnergy >= 0.5f && !isStarPowerActive
                 Button(
                     onClick = { viewModel.activateStarPower() },
@@ -513,6 +582,27 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
                     )
                 }
             }
+
+            if (strikeEnabled && mpRoom?.statusEnum == com.example.guitarlegends.model.RoomStatus.PLAYING &&
+                partnerParticipant != null
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.sendStrike(partnerParticipant.userId, "LANE_INVERSION") },
+                    modifier = Modifier.width(126.dp).testTag("strike_attack_inversion_button"),
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RockAccentCyan)
+                ) {
+                    Text("STRIKE: INVERSÃO", fontSize = 8.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = { viewModel.sendStrike(partnerParticipant.userId, "FOG") },
+                    modifier = Modifier.width(126.dp).testTag("strike_attack_fog_button"),
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RockAccentGold)
+                ) {
+                    Text("STRIKE: NEBLINA", fontSize = 8.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                }
+            }
         }
 
         // Right HUD: Hit Rating feedback + Classic Semicircular Rock Meter & 5 Star Power Vacuum Tubes
@@ -544,9 +634,9 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
 
             AnalogRockMeterWithTubes(
                 rockMeter = rockMeter,
-                starPowerEnergy = if (strikeEnabled) starPowerEnergy else 0f,
-                isStarPowerActive = strikeEnabled && isStarPowerActive,
-                showStarPowerTubes = strikeEnabled
+                starPowerEnergy = starPowerEnergy,
+                isStarPowerActive = isStarPowerActive,
+                showStarPowerTubes = true
             )
         }
 
@@ -607,8 +697,84 @@ fun LiveStageGameplayScreen(viewModel: GameViewModel) {
             }
         }
 
-        // Pause Menu Dialog Overlay (Ordem Exata: 1. Continuar, 2. Reiniciar música, 3. Controle de volume, 4. Próxima música, 5. Sair)
-        if (isPaused) {
+        // A pausa coletiva bloqueia a pista inteira e apresenta a espera animada de reconexão.
+        if (isCollectivePause) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xF20A0714), Color(0xF51B0D2E), Color(0xF2080710))
+                        )
+                    )
+                    .pointerInput(Unit) { detectTapGestures { /* bloqueia comandos durante a pausa coletiva */ } }
+                    .testTag("multiplayer_reconnect_overlay"),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth(0.82f)
+                        .widthIn(max = 520.dp)
+                        .testTag("multiplayer_reconnect_card"),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xF21A112B)),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(listOf(RockAccentCyan, RockAccentGold))
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "GUITAR LEGENDS",
+                            color = RockAccentGold,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 15.sp,
+                            letterSpacing = 2.sp
+                        )
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(54.dp).testTag("multiplayer_reconnect_loading"),
+                            color = RockAccentCyan,
+                            trackColor = Color.White.copy(alpha = 0.12f),
+                            strokeWidth = 5.dp
+                        )
+                        Text(
+                            text = "AGUARDANDO RECONEXÃO",
+                            color = Color.White,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 19.sp,
+                            letterSpacing = 0.7.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            text = "Jogador: ${mpRoom?.pausedByNickname?.ifBlank { "Participante" } ?: "Participante"}",
+                            color = RockAccentCyan,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.testTag("multiplayer_reconnect_player")
+                        )
+                        Text(
+                            text = String.format("%02d:%02d", collectivePauseSeconds / 60, collectivePauseSeconds % 60),
+                            color = RockAccentGold,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 34.sp,
+                            modifier = Modifier.testTag("multiplayer_reconnect_countdown")
+                        )
+                        Text(
+                            text = reconnectPhrases[reconnectPhraseIndex],
+                            color = Color.White.copy(alpha = 0.82f),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.testTag("multiplayer_reconnect_phrase")
+                        )
+                    }
+                }
+            }
+        } else if (isPaused) {
             val audio = stats.studioProfile.audioSettings
             Box(
                 modifier = Modifier

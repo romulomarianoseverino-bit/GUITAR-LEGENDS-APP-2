@@ -29,6 +29,7 @@ abstract class FirestoreEmulatorTestBase {
     protected lateinit var firestore: FirebaseFirestore
     protected lateinit var auth: FirebaseAuth
     protected lateinit var databaseId: String
+    protected lateinit var firebaseApp: FirebaseApp
 
     @Before
     open fun setUpFirebase() {
@@ -36,35 +37,33 @@ abstract class FirestoreEmulatorTestBase {
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
         databaseId = if (resId != 0) context.getString(resId) else "demo-database"
 
-        val app = if (FirebaseApp.getApps(context).isEmpty()) {
-            val newApp = FirebaseApp.initializeApp(
-                context,
-                FirebaseOptions.Builder()
-                    .setApplicationId("com.aistudio.applet.kpfcic")
-                    .setProjectId(PROJECT_ID)
-                    .setApiKey("fake-api-key-for-emulator")
-                    .build()
-            )
-            val newFirestore = FirebaseFirestore.getInstance(newApp, databaseId)
-            newFirestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
-            newFirestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
-                .build()
+        // Cada teste usa um FirebaseApp isolado e aponta explicitamente para os emuladores.
+        // Não reutiliza o app padrão do Android, que pode ter clientes inicializados antes do teste.
+        firebaseApp = FirebaseApp.initializeApp(
+            context,
+            FirebaseOptions.Builder()
+                .setApplicationId("com.aistudio.applet.kpfcic")
+                .setProjectId(PROJECT_ID)
+                .setApiKey("fake-api-key-for-emulator")
+                .build(),
+            "guitar-legends-test-${java.util.UUID.randomUUID()}"
+        )
 
-            val newAuth = FirebaseAuth.getInstance(newApp)
-            newAuth.useEmulator(EMULATOR_HOST, AUTH_PORT)
-            newApp
-        } else {
-            FirebaseApp.getInstance()
-        }
+        firestore = FirebaseFirestore.getInstance(firebaseApp, databaseId)
+        firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+        firestore.firestoreSettings = FirebaseFirestoreSettings.Builder()
+            .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
+            .build()
 
-        firestore = FirebaseFirestore.getInstance(app, databaseId)
-        auth = FirebaseAuth.getInstance(app)
+        auth = FirebaseAuth.getInstance(firebaseApp)
+        auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
     }
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
+        // Mantém o ciclo de vida do FirebaseApp compatível com o ambiente Robolectric.
+        // O encerramento forçado do cliente Firestore causou falha no teste de troca de conta.
+        runCatching { auth.signOut() }
     }
 
     // Helper exclusivo para testes locais contra o Auth Emulator.
@@ -75,7 +74,9 @@ abstract class FirestoreEmulatorTestBase {
             } catch (_: FirebaseAuthUserCollisionException) {
                 auth.signInWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
             }
-            checkNotNull(result.user?.uid) { "User auth failed for $email" }
+            val signedInUser = checkNotNull(result.user) { "User auth failed for $email" }
+            signedInUser.getIdToken(true).await()
+            checkNotNull(signedInUser.uid) { "User auth failed for $email" }
         }
     }
 
@@ -94,6 +95,6 @@ abstract class FirestoreEmulatorTestBase {
         const val AUTH_PORT = 9099
         const val PROJECT_ID = "demo-no-project"
         const val DEFAULT_PASSWORD = "password123"
-        const val AUTH_TIMEOUT_MS = 5000L
+        const val AUTH_TIMEOUT_MS = 10000L
     }
 }

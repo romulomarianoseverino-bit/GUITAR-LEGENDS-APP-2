@@ -4,6 +4,7 @@ import com.example.guitarlegends.model.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
@@ -95,6 +96,7 @@ class MultiplayerCloudRepository(
                 combo = 0,
                 rockMeter = 0.6,
                 starPowerActive = false,
+                strikeConsent = strikeEnabled,
                 lastHeartbeatMs = System.currentTimeMillis()
             )
             roomRef.collection("participants").document(uid)
@@ -172,6 +174,7 @@ class MultiplayerCloudRepository(
                         "difficulty" to difficulty.name,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -209,9 +212,14 @@ class MultiplayerCloudRepository(
         }
         val listener = firestore.collection("multiplayer_rooms")
             .document(normalized)
-            .addSnapshotListener { snap, error ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snap, error ->
                 if (error != null) {
                     close(error)
+                    return@addSnapshotListener
+                }
+                // Não propague ao jogo um estado que ainda existe somente no cache local.
+                // O outro participante só pode iniciar quando a alteração estiver confirmada.
+                if (snap?.metadata?.hasPendingWrites() == true) {
                     return@addSnapshotListener
                 }
                 val room = if (snap != null && snap.exists()) {
@@ -252,6 +260,27 @@ class MultiplayerCloudRepository(
         awaitClose { listener.remove() }
     }
 
+    suspend fun updateParticipantStrikeConsent(roomCode: String, consent: Boolean): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized/participants/$uid"
+        return try {
+            firestore.collection("multiplayer_rooms").document(normalized)
+                .collection("participants").document(uid)
+                .update(
+                    mapOf(
+                        "strikeConsent" to consent,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
     suspend fun updateParticipantLoadout(
         roomCode: String,
         nickname: String,
@@ -276,6 +305,7 @@ class MultiplayerCloudRepository(
                         "ready" to ready,
                         "connectionState" to ParticipantConnectionState.ONLINE.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -292,8 +322,7 @@ class MultiplayerCloudRepository(
         score: Int,
         combo: Int,
         rockMeter: Float,
-        starPowerActive: Boolean,
-        connectionState: ParticipantConnectionState = ParticipantConnectionState.ONLINE
+        starPowerActive: Boolean
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
@@ -309,13 +338,142 @@ class MultiplayerCloudRepository(
                         "score" to score.coerceIn(0, 50_000_000),
                         "combo" to combo.coerceIn(0, 100_000),
                         "rockMeter" to rockMeter.toDouble().coerceIn(0.0, 1.0),
-                        "starPowerActive" to starPowerActive,
-                        "connectionState" to connectionState.name,
-                        "lastHeartbeatMs" to System.currentTimeMillis(),
-                        "updatedAt" to FieldValue.serverTimestamp()
+                        "starPowerActive" to starPowerActive
                     )
                 )
                 .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    fun observeStrikes(roomCode: String): Flow<List<StrikeEventCloud>> = callbackFlow {
+        val normalized = normalizeRoomCode(roomCode)
+        if (!roomCodeRegex.matches(normalized) || auth.currentUser == null) {
+            close(IllegalStateException("Sala ou autenticação inválida."))
+            return@callbackFlow
+        }
+        val listener = firestore.collection("multiplayer_rooms")
+            .document(normalized)
+            .collection("strikes")
+            .addSnapshotListener { snap, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val events = snap?.documents?.mapNotNull { doc ->
+                    doc.toObject(StrikeEventCloud::class.java)?.copy(id = doc.id)
+                }?.sortedBy { it.createdAtMs } ?: emptyList()
+                trySend(events)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun sendStrike(roomCode: String, targetUid: String, power: String): Result<String> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        if (targetUid.isBlank() || targetUid == uid || power !in setOf("LANE_INVERSION", "FOG")) {
+            return Result.failure(IllegalArgumentException("Ataque ou alvo inválido."))
+        }
+        val path = "multiplayer_rooms/$normalized/strikes"
+        return try {
+            val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
+            val strikeId = firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val room = roomSnap.toObject(MultiplayerRoomCloud::class.java)
+                    ?: throw IllegalStateException("Sala não encontrada.")
+
+                if (room.statusEnum != RoomStatus.PLAYING) {
+                    throw IllegalStateException("A partida ainda não está em andamento.")
+                }
+                if (!room.strikeEnabled) {
+                    throw IllegalStateException("O anfitrião não habilitou o Strike nesta sala.")
+                }
+                if (uid !in room.memberUids) {
+                    throw IllegalStateException("Seu jogador não consta mais na lista de participantes da sala.")
+                }
+                if (targetUid !in room.memberUids) {
+                    throw IllegalStateException("O jogador escolhido não consta mais na lista de participantes.")
+                }
+
+                // A decisão é conferida no servidor para todos os integrantes da sala.
+                // Assim, um cliente desatualizado não consegue enviar Strike sem consentimento.
+                val participantSnapshots = room.memberUids.distinct().map { memberUid ->
+                    tx.get(roomRef.collection("participants").document(memberUid))
+                }
+                if (participantSnapshots.size < 2 || participantSnapshots.any { !it.exists() }) {
+                    throw IllegalStateException("Não foi possível confirmar todos os participantes da sala.")
+                }
+                if (participantSnapshots.any { it.getBoolean("strikeConsent") != true }) {
+                    throw IllegalStateException("O Strike só pode ser usado quando todos os jogadores concordarem.")
+                }
+
+                val strikeRef = roomRef.collection("strikes").document()
+                tx.set(
+                    strikeRef,
+                    mapOf(
+                        "roomCode" to normalized,
+                        "attackerUid" to uid,
+                        "targetUid" to targetUid,
+                        "power" to power,
+                        "createdAtMs" to System.currentTimeMillis(),
+                        "status" to "PENDING",
+                        "resolvedAtMs" to 0L
+                    )
+                )
+                strikeRef.id
+            }.await()
+            Result.success(strikeId)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.WRITE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    suspend fun markStrikeApplied(roomCode: String, strikeId: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        if (strikeId.isBlank() || strikeId.length > 128) {
+            return Result.failure(IllegalArgumentException("Ataque inválido."))
+        }
+        val path = "multiplayer_rooms/$normalized/strikes/$strikeId"
+        return try {
+            firestore.collection("multiplayer_rooms").document(normalized)
+                .collection("strikes").document(strikeId)
+                .update(
+                    mapOf(
+                        "status" to "APPLIED",
+                        "resolvedAtMs" to System.currentTimeMillis()
+                    )
+                ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    suspend fun defendStrike(roomCode: String, strikeId: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        if (strikeId.isBlank() || strikeId.length > 128) {
+            return Result.failure(IllegalArgumentException("Ataque inválido."))
+        }
+        val path = "multiplayer_rooms/$normalized/strikes/$strikeId"
+        return try {
+            firestore.collection("multiplayer_rooms").document(normalized)
+                .collection("strikes").document(strikeId)
+                .update(
+                    mapOf(
+                        "status" to "DEFENDED",
+                        "resolvedAtMs" to System.currentTimeMillis()
+                    )
+                ).await()
             Result.success(Unit)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -340,11 +498,238 @@ class MultiplayerCloudRepository(
                     mapOf(
                         "connectionState" to connectionState.name,
                         "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
                 .await()
             Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    /**
+     * Marca a saída do participante e, se a partida estiver em andamento,
+     * inicia uma única pausa coletiva usando o horário do servidor Firestore.
+     * Repetições durante a mesma pausa não reiniciam o prazo.
+     */
+    suspend fun markDisconnectedAndPauseRoom(roomCode: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized"
+        return try {
+            val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
+            val participantRef = roomRef.collection("participants").document(uid)
+            firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val participantSnap = tx.get(participantRef)
+                if (!roomSnap.exists() || !participantSnap.exists()) {
+                    throw IllegalStateException("A participação na sala não foi encontrada.")
+                }
+                val room = roomSnap.toObject(
+                    MultiplayerRoomCloud::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: throw IllegalStateException("Dados da sala inválidos.")
+                if (room.statusEnum == RoomStatus.CLOSED || room.statusEnum == RoomStatus.FINISHED) {
+                    return@runTransaction
+                }
+
+                tx.update(
+                    participantRef,
+                    mapOf(
+                        "connectionState" to ParticipantConnectionState.DISCONNECTED.name,
+                        "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                if (room.statusEnum == RoomStatus.PLAYING) {
+                    val nickname = safeNickname(participantSnap.getString("nickname").orEmpty(), uid)
+                    tx.update(
+                        roomRef,
+                        mapOf(
+                            "status" to RoomStatus.PAUSED.name,
+                            "pauseStartedAt" to FieldValue.serverTimestamp(),
+                            "pausedByUid" to uid,
+                            "pausedByNickname" to nickname,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+            }.await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    /**
+     * Um membro conectado pode solicitar a pausa quando o heartbeat de outro
+     * participante PRONTO estiver vencido. A regra do Firestore confirma o
+     * prazo usando request.time e o timestamp de servidor do heartbeat.
+     */
+    suspend fun pauseRoomForStaleParticipant(roomCode: String, targetUid: String): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized"
+        return try {
+            val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
+            val targetRef = roomRef.collection("participants").document(targetUid)
+            firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val targetSnap = tx.get(targetRef)
+                if (!roomSnap.exists() || !targetSnap.exists()) {
+                    throw IllegalStateException("Sala ou participante não encontrado.")
+                }
+                val room = roomSnap.toObject(
+                    MultiplayerRoomCloud::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: throw IllegalStateException("Dados da sala inválidos.")
+                if (room.statusEnum != RoomStatus.PLAYING) return@runTransaction
+                if (!room.memberUids.contains(uid) || !room.memberUids.contains(targetUid)) {
+                    throw IllegalStateException("Participante não pertence à sala.")
+                }
+                if (targetSnap.getBoolean("ready") != true) return@runTransaction
+                val nickname = safeNickname(targetSnap.getString("nickname").orEmpty(), targetUid)
+                tx.update(
+                    roomRef,
+                    mapOf(
+                        "status" to RoomStatus.PAUSED.name,
+                        "pauseStartedAt" to FieldValue.serverTimestamp(),
+                        "pausedByUid" to targetUid,
+                        "pausedByNickname" to nickname,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }.await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    /**
+     * Revalida a identidade e restaura a presença. Se a sala estiver PAUSED,
+     * a transição de volta a PLAYING ocorre na mesma transação que ONLINE;
+     * as regras do Firestore rejeitam a retomada após os 60 segundos.
+     */
+    suspend fun reconnectParticipant(
+        roomCode: String,
+        nickname: String,
+        instrument: Instrument,
+        difficulty: Difficulty
+    ): Result<MultiplayerRoomCloud> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized"
+        return try {
+            val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
+            val participantRef = roomRef.collection("participants").document(uid)
+            val refreshed = firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val participantSnap = tx.get(participantRef)
+                if (!roomSnap.exists() || !participantSnap.exists()) {
+                    throw IllegalStateException("A sala ou a participação não existe mais.")
+                }
+                val room = roomSnap.toObject(
+                    MultiplayerRoomCloud::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: throw IllegalStateException("Dados da sala inválidos.")
+                if (room.statusEnum == RoomStatus.CLOSED || room.statusEnum == RoomStatus.FINISHED) {
+                    throw IllegalStateException("Esta sala já foi encerrada.")
+                }
+                if (!room.memberUids.contains(uid)) {
+                    throw IllegalStateException("Você não faz mais parte desta sala.")
+                }
+                val memberSnapshots = room.memberUids.map { memberUid ->
+                    tx.get(roomRef.collection("participants").document(memberUid))
+                }
+                val allOtherMembersOnline = memberSnapshots
+                    .filter { it.id != uid }
+                    .all { it.exists() && it.getString("connectionState") == ParticipantConnectionState.ONLINE.name }
+
+                tx.update(
+                    participantRef,
+                    mapOf(
+                        "nickname" to safeNickname(nickname, uid),
+                        "instrument" to instrument.name,
+                        "difficulty" to difficulty.name,
+                        "connectionState" to ParticipantConnectionState.ONLINE.name,
+                        "lastHeartbeatMs" to System.currentTimeMillis(),
+                        "lastHeartbeatAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                if (room.statusEnum == RoomStatus.PAUSED && allOtherMembersOnline) {
+                    tx.update(
+                        roomRef,
+                        mapOf(
+                            "status" to RoomStatus.PLAYING.name,
+                            "pauseStartedAt" to FieldValue.delete(),
+                            "pausedByUid" to FieldValue.delete(),
+                            "pausedByNickname" to FieldValue.delete(),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                    room.copy(
+                        status = RoomStatus.PLAYING.name,
+                        pauseStartedAt = null,
+                        pausedByUid = "",
+                        pausedByNickname = ""
+                    )
+                } else {
+                    room
+                }
+            }.await()
+            Result.success(refreshed)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
+        }
+    }
+
+    /**
+     * Solicita o encerramento de uma pausa expirada. O horário limite é
+     * validado pelas regras com request.time do Firestore, não pelo relógio local.
+     */
+    suspend fun closeExpiredPausedRoom(roomCode: String): Result<Boolean> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
+        val normalized = normalizeRoomCode(roomCode)
+        val path = "multiplayer_rooms/$normalized"
+        return try {
+            val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
+            val closed = firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                if (!roomSnap.exists()) return@runTransaction false
+                val room = roomSnap.toObject(
+                    MultiplayerRoomCloud::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: return@runTransaction false
+                if (room.statusEnum == RoomStatus.CLOSED) return@runTransaction true
+                if (room.statusEnum != RoomStatus.PAUSED || !room.memberUids.contains(uid)) {
+                    return@runTransaction false
+                }
+                tx.update(
+                    roomRef,
+                    mapOf(
+                        "status" to RoomStatus.CLOSED.name,
+                        "pauseStartedAt" to FieldValue.delete(),
+                        "pausedByUid" to FieldValue.delete(),
+                        "pausedByNickname" to FieldValue.delete(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                true
+            }.await()
+            Result.success(closed)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Result.failure(runCatching { handleFirestoreError(e, OperationType.UPDATE, path, auth) }.exceptionOrNull() ?: e)
@@ -357,7 +742,9 @@ class MultiplayerCloudRepository(
         track: Track,
         status: RoomStatus? = null,
         winnerUid: String? = null,
-        strikeEnabled: Boolean? = null
+        strikeEnabled: Boolean? = null,
+        audioTransferId: String? = null,
+        trackFingerprint: String? = null
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
@@ -379,6 +766,12 @@ class MultiplayerCloudRepository(
             }
             if (strikeEnabled != null) {
                 updates["strikeEnabled"] = strikeEnabled
+            }
+            if (audioTransferId != null) {
+                updates["audioTransferId"] = audioTransferId.take(64)
+            }
+            if (trackFingerprint != null) {
+                updates["trackFingerprint"] = trackFingerprint.take(64)
             }
             firestore.collection("multiplayer_rooms")
                 .document(normalized)

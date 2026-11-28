@@ -167,7 +167,7 @@ fun drawHighway(
 ) {
     val geo = computeSingleHighwayGeometry(canvasWidth, canvasHeight, difficulty)
     val timeSec = currentTimeMs / 1000f
-    val effectiveStarPower = strikeEnabled && isStarPowerActive
+    val effectiveStarPower = isStarPowerActive
 
     // 1. DESENHO DO PALCO DE SHOW TEMÁTICO COM BANDA COMPLETA AO REDOR DA ESTEIRA
     drawStageEnvironment(
@@ -246,7 +246,7 @@ fun drawDualMultiplayerHighways(
     val strikeY = leftGeo.strikeY
     val stageCenterX = canvasWidth * 0.50f
     val timeSec = currentTimeMs / 1000f
-    val anyStarPower = strikeEnabled && (leftStarPowerActive || rightStarPowerActive)
+    val anyStarPower = leftStarPowerActive || rightStarPowerActive
 
     drawStageEnvironment(
         drawScope = drawScope,
@@ -281,7 +281,7 @@ fun drawDualMultiplayerHighways(
         difficulty = leftDifficulty,
         activeFretLanes = leftActiveLanes,
         activePickFlashes = leftPickFlashes,
-        isStarPowerActive = strikeEnabled && leftStarPowerActive,
+        isStarPowerActive = leftStarPowerActive,
         strikeEnabled = strikeEnabled,
         highwayTheme = highwayTheme,
         highwayOverlayBitmap = highwayOverlayBitmap,
@@ -304,7 +304,7 @@ fun drawDualMultiplayerHighways(
         difficulty = rightDifficulty,
         activeFretLanes = rightActiveLanes,
         activePickFlashes = rightPickFlashes,
-        isStarPowerActive = strikeEnabled && rightStarPowerActive,
+        isStarPowerActive = rightStarPowerActive,
         strikeEnabled = strikeEnabled,
         highwayTheme = highwayTheme,
         highwayOverlayBitmap = highwayOverlayBitmap,
@@ -630,7 +630,7 @@ private fun drawSinglePerspectiveHighway(
             if (note.durationMs > 50L) {
                 val tailEndDepth = (1.0f - ((timeUntilHit + note.durationMs).toFloat() / lookAheadMs.toFloat())).coerceIn(0f, 1.0f)
                 val tailEndPos = get3dPosition(note.lane, tailEndDepth)
-                val useStarColor = strikeEnabled && (note.isStarPower || isStarPowerActive)
+                val useStarColor = note.isStarPower || isStarPowerActive
                 val baseSustainColor = if (useStarColor) Color(0xFF00E5FF) else LaneColors[note.lane]
 
                 if (note.sustainBroken) {
@@ -678,7 +678,7 @@ private fun drawSinglePerspectiveHighway(
             }
 
             if (!isActiveSustainNote) {
-                if (strikeEnabled && note.isStarPower) {
+                if (note.isStarPower) {
                     drawStarPowerNote3D(drawScope, notePos, rx, ry, isStarPowerActive)
                 } else {
                     val gemColor = if (isStarPowerActive) Color(0xFF00E5FF) else LaneColors[note.lane]
