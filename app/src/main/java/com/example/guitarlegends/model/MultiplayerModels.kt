@@ -15,6 +15,7 @@ enum class MultiplayerMode(val displayName: String, val maxPlayers: Int) {
 enum class RoomStatus(val label: String) {
     WAITING("Aguardando Jogadores"),
     PLAYING("Show em Andamento"),
+    PAUSED("Aguardando Reconexão"),
     FINISHED("Show Finalizado"),
     CLOSED("Sala Encerrada")
 }
@@ -44,6 +45,9 @@ data class MultiplayerRoomCloud(
     val strikeEnabled: Boolean = true,
     val audioTransferId: String = "",
     val trackFingerprint: String = "",
+    val pauseStartedAt: Timestamp? = null,
+    val pausedByUid: String = "",
+    val pausedByNickname: String = "",
     @ServerTimestamp
     val createdAt: Timestamp? = null,
     @ServerTimestamp
@@ -108,11 +112,12 @@ data class MultiplayerParticipantCloud(
         get() = runCatching { ParticipantConnectionState.valueOf(connectionState) }
             .getOrDefault(ParticipantConnectionState.ONLINE)
 
-    // A tolerância de 2 minutos cobre pausas breves do Android ao alternar para outro aplicativo.
-    // DISCONNECTED explícito continua sendo reconhecido imediatamente.
-    fun isStale(nowMs: Long, thresholdMs: Long = 120_000L): Boolean {
+    // Antes de PRONTO, a sala tolera até 2 minutos de ausência.
+    // Depois de PRONTO, a tolerância é curta; uma saída explícita é imediata.
+    fun isStale(nowMs: Long, thresholdMs: Long? = null): Boolean {
         if (connectionStateEnum == ParticipantConnectionState.DISCONNECTED) return true
-        return lastHeartbeatMs > 0L && (nowMs - lastHeartbeatMs) > thresholdMs
+        val allowedMs = thresholdMs ?: if (ready) 20_000L else 120_000L
+        return lastHeartbeatMs > 0L && (nowMs - lastHeartbeatMs) > allowedMs
     }
 
     fun toCreateMap(): Map<String, Any?> = mapOf(
