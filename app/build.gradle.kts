@@ -33,12 +33,6 @@ android {
       keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
   }
 
   buildTypes {
@@ -51,9 +45,9 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("debugConfig")
+      // Internal debug builds also use the permanent project key. No generated debug key is allowed.
+      // Never distribute a debuggable APK; release builds remain the only distribution candidate.
+      signingConfig = signingConfigs.getByName("release")
     }
   }
   compileOptions {
