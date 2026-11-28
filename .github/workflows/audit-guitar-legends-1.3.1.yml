@@ -180,9 +180,20 @@ jobs:
                 out.write(log)
             if not pid:
                 raise SystemExit("O processo do Guitar Legends não permaneceu ativo após 20 segundos.")
-            if "FATAL EXCEPTION" in log:
-                raise SystemExit("Foi detectada uma exceção fatal no Guitar Legends.")
+            crash_markers = ("FATAL EXCEPTION", "Fatal signal", "am_crash", "am_anr")
+            detected = [marker for marker in crash_markers if marker.lower() in log.lower()]
+            if detected:
+                raise SystemExit("Falha/crash detectado no Android: " + ", ".join(detected))
             print(f"Processo ativo após 20 segundos: {pid}", flush=True)
+
+      - name: Publicar registros de execução do Android
+        if: always() && steps.validate_apk.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: registros-android-16-1.3.1
+          path: ${{ runner.temp }}/android-runtime-errors.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Publicar relatórios de testes
         if: always()
