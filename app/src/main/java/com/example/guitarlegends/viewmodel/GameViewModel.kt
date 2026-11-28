@@ -3435,11 +3435,18 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
                         } else {
                             "A sala $roomCode foi encerrada."
                         }
+                        if (wasPaused) {
+                            audioPlayer.stop()
+                            gameLoopJob?.cancel()
+                            _isPaused.value = false
+                            wasCollectivelyPaused = false
+                        }
                         stopRoomObserversOnly()
                         _multiplayerRoom.value = null
                         _multiplayerParticipants.value = emptyList()
                         _multiplayerConnectionWarning.value = closedMsg
                         hasAutoStartedRoomMatch = false
+                        if (wasPaused) navigateTo(GameScreen.MainMenu, pushStack = false)
                         return@collect
                     }
 
