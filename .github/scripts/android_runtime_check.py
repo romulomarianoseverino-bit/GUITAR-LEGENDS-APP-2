@@ -6,8 +6,10 @@ import time
 from pathlib import Path
 
 PACKAGE = "com.aistudio.applet.kpfcic"
+ACTIVITY = "com.example.MainActivity"
 APK = "app/build/outputs/apk/release/app-release.apk"
 LOG_PATH = Path(os.environ.get("RUNNER_TEMP", ".")) / "android-runtime-errors.log"
+
 
 def run(args, check=True):
     result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
@@ -16,20 +18,42 @@ def run(args, check=True):
     if output:
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
     if check and result.returncode:
-        raise RuntimeError(f"Comando falhou ({result.returncode}): {' '.join(args)}")
+        raise RuntimeError(
+            f"Comando falhou ({result.returncode}): {' '.join(args)}"
+        )
     return output.strip(), result.returncode
 
+
 def collect_logcat():
-    output, _ = run(["adb", "logcat", "-b", "all", "-d", "-t", "4000"], check=False)
+    output, _ = run(
+        ["adb", "logcat", "-b", "all", "-d", "-t", "8000"],
+        check=False
+    )
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_PATH.write_text(output + "\n", encoding="utf-8")
     return output
+
+
+def relevant_lines(log):
+    terms = (
+        "FATAL EXCEPTION", "AndroidRuntime", "Fatal signal", "tombstone",
+        "Process: " + PACKAGE, "am_crash", "am_anr", PACKAGE,
+        "ANR in ", "ActivityTaskManager"
+    )
+    return [
+        line for line in log.splitlines()
+        if any(term.lower() in line.lower() for term in terms)
+    ]
+
 
 def main():
     run(["adb", "wait-for-device"])
     booted = False
     for _ in range(120):
-        value, _ = run(["adb", "shell", "getprop", "sys.boot_completed"], check=False)
+        value, _ = run(
+            ["adb", "shell", "getprop", "sys.boot_completed"],
+            check=False
+        )
         if value.strip() == "1":
             booted = True
             break
@@ -44,7 +68,10 @@ def main():
     installed = False
     for attempt in range(1, 4):
         print(f"Tentativa de instalação {attempt}/3", flush=True)
-        _, code = run(["adb", "install", "--no-streaming", "-r", APK], check=False)
+        _, code = run(
+            ["adb", "install", "--no-streaming", "-r", APK],
+            check=False
+        )
         if code == 0:
             installed = True
             break
@@ -55,27 +82,69 @@ def main():
 
     run(["adb", "logcat", "-c"])
     run(["adb", "shell", "am", "force-stop", PACKAGE], check=False)
-    run(["adb", "shell", "monkey", "-p", PACKAGE, "1"])
-    time.sleep(30)
 
-    pid, _ = run(["adb", "shell", "pidof", PACKAGE], check=False)
+    # Start the known launcher activity directly. The Monkey command can itself
+    # stall when Android system services are overloaded, producing a false
+    # app-start failure without actually launching the application.
+    start_output, start_code = run([
+        "adb", "shell", "am", "start", "-W", "-n",
+        f"{PACKAGE}/{ACTIVITY}"
+    ], check=False)
+    if start_code != 0 or "Status: ok" not in start_output:
+        log = collect_logcat()
+        print("=== Registros relevantes após falha ao iniciar ===", flush=True)
+        print("\n".join(relevant_lines(log)[-300:]), flush=True)
+        raise RuntimeError(
+            "O Android não confirmou a abertura da tela principal "
+            "pela atividade inicial do aplicativo."
+        )
+
+    pid = ""
+    for _ in range(15):
+        pid, _ = run(
+            ["adb", "shell", "pidof", PACKAGE],
+            check=False
+        )
+        if pid:
+            break
+        time.sleep(2)
+
+    time.sleep(30)
+    final_pid, _ = run(
+        ["adb", "shell", "pidof", PACKAGE],
+        check=False
+    )
     log = collect_logcat()
-    markers = ("FATAL EXCEPTION", "Fatal signal", "am_crash", "am_anr",
-               "ANR in " + PACKAGE)
-    detected = [marker for marker in markers if marker.lower() in log.lower()]
 
     print("=== Linhas relevantes do Android ===", flush=True)
-    terms = ("FATAL EXCEPTION", "AndroidRuntime", "Fatal signal", "tombstone",
-             "Process: " + PACKAGE, "am_crash", "am_anr", PACKAGE)
-    matches = [line for line in log.splitlines()
-               if any(term.lower() in line.lower() for term in terms)]
-    print("\n".join(matches[-250:]), flush=True)
+    print("\n".join(relevant_lines(log)[-300:]), flush=True)
 
+    app_markers = (
+        "FATAL EXCEPTION",
+        "Fatal signal",
+        "am_crash",
+        "am_anr",
+        "ANR in " + PACKAGE
+    )
+    detected = [
+        marker for marker in app_markers
+        if marker.lower() in log.lower()
+    ]
     if detected:
-        raise RuntimeError("Falha/crash detectado: " + ", ".join(detected))
-    if not pid:
-        raise RuntimeError("O processo do aplicativo não permaneceu ativo após 30 segundos.")
-    print(f"Processo ativo após 30 segundos: {pid}", flush=True)
+        raise RuntimeError(
+            "Falha/crash do aplicativo detectado: " + ", ".join(detected)
+        )
+    if not final_pid:
+        raise RuntimeError(
+            "A atividade foi chamada, mas o processo do aplicativo "
+            "não permaneceu ativo após a janela de validação."
+        )
+
+    print(
+        f"Processo ativo após a abertura e 30 segundos: {final_pid}",
+        flush=True
+    )
+
 
 if __name__ == "__main__":
     try:
