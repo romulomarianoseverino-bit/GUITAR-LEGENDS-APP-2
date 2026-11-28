@@ -3153,6 +3153,14 @@ class GameViewModel(application: Application, firebaseApp: FirebaseApp? = null) 
             _multiplayerError.value = "Aguarde pelo menos 1 outro jogador entrar na sala '${room.roomCode}' (ou compartilhe o código)."
             return
         }
+        val disconnectedParticipants = participants.filter {
+            it.connectionStateEnum != ParticipantConnectionState.ONLINE
+        }
+        if (disconnectedParticipants.isNotEmpty()) {
+            val names = disconnectedParticipants.joinToString { it.nickname }
+            _multiplayerError.value = "Aguardando reconexão antes de iniciar: $names."
+            return
+        }
         val unreadyGuests = participants.filter { it.userId != uid && !it.ready }
         if (unreadyGuests.isNotEmpty()) {
             val names = unreadyGuests.joinToString { it.nickname }
