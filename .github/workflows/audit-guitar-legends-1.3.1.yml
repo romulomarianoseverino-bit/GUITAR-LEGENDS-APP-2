@@ -13,7 +13,7 @@ jobs:
   audit:
     name: Testes automatizados com Firebase Emulator
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - name: Baixar código
         uses: actions/checkout@v4
@@ -45,8 +45,7 @@ jobs:
           firebase emulators:exec --project demo-no-project --only auth,firestore \
             'gradle --no-daemon testDebugUnitTest --stacktrace'
 
-      # Usa exatamente a chave permanente já utilizada pelo fluxo oficial do projeto.
-      # Se os segredos estiverem ausentes ou inválidos, não gera APK com outra assinatura.
+      # Usa a chave permanente e confere o certificado extraído do APK 1.3 original.
       - name: Preparar chave permanente de assinatura
         id: prepare_signing
         if: success()
@@ -90,7 +89,8 @@ jobs:
         if: success() && steps.prepare_signing.outcome == 'success'
         run: gradle --no-daemon clean assembleRelease
 
-      - name: Validar assinatura, alinhamento e identificação do APK
+      - name: Validar certificado original, alinhamento e identificação
+        id: validate_apk
         if: success() && steps.build_release.outcome == 'success'
         run: |
           set -euo pipefail
@@ -98,6 +98,13 @@ jobs:
           test -s "$APK"
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/apk-certificates.txt"
+          cat "$RUNNER_TEMP/apk-certificates.txt"
+          EXPECTED_CERT_SHA256="3d026d2a62e1b4e8dd319b056c1c03cd77dcd34fe7fc1bcf2da69e6701558fe9"
+          grep -Eiq "certificate SHA-256 digest: *$EXPECTED_CERT_SHA256" "$RUNNER_TEMP/apk-certificates.txt" || {
+            echo "::error::O certificado do APK 1.3.1 não corresponde ao certificado do APK 1.3 original."
+            exit 1
+          }
           "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
           BADGING="$("$BUILD_TOOLS/aapt" dump badging "$APK" | head -n 1)"
           echo "$BADGING"
@@ -105,8 +112,17 @@ jobs:
           echo "$BADGING" | grep -q "versionName='1.3.1'"
           sha256sum "$APK"
 
+      - name: Publicar APK candidato para inspeção (não é liberação)
+        if: success() && steps.validate_apk.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: guitar-legends-1.3.1-candidato-nao-liberado
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Instalar e abrir no emulador Android 16
-        if: success() && steps.build_release.outcome == 'success'
+        if: success() && steps.validate_apk.outcome == 'success'
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_I_WANT_MY_TCG: "yes"
@@ -115,15 +131,36 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          cores: 4
+          cores: 2
           ram-size: 2048M
           heap-size: 512M
           disable-animations: true
-          emulator-boot-timeout: 1200
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          emulator-boot-timeout: 1800
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data
           script: |
             set -eu
-            adb install app/build/outputs/apk/release/app-release.apk
+            adb wait-for-device
+            BOOTED=""
+            for attempt in $(seq 1 90); do
+              BOOTED="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+              [ "$BOOTED" = "1" ] && break
+              sleep 2
+            done
+            [ "$BOOTED" = "1" ] || { echo "Emulador não concluiu a inicialização."; adb devices -l; exit 1; }
+
+            INSTALL_OK=""
+            for attempt in 1 2 3; do
+              echo "Tentativa de instalação $attempt/3"
+              if adb install --no-streaming -r app/build/outputs/apk/release/app-release.apk; then
+                INSTALL_OK="yes"
+                break
+              fi
+              adb devices -l
+              sleep 5
+            done
+            [ "$INSTALL_OK" = "yes" ] || { adb logcat -d -t 500; exit 1; }
+
+            adb logcat -c
             adb shell monkey -p com.aistudio.applet.kpfcic 1
             sleep 20
             adb shell pidof com.aistudio.applet.kpfcic
