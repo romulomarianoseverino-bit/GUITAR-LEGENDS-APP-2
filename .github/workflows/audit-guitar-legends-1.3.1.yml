@@ -137,36 +137,8 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 1800
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -wipe-data
-          script: |
-            set -eu
-            adb wait-for-device
-            BOOTED=""
-            for attempt in $(seq 1 90); do
-              BOOTED="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-              [ "$BOOTED" = "1" ] && break
-              sleep 2
-            done
-            [ "$BOOTED" = "1" ] || { echo "Emulador não concluiu a inicialização."; adb devices -l; exit 1; }
-
-            INSTALL_OK=""
-            for attempt in 1 2 3; do
-              echo "Tentativa de instalação $attempt/3"
-              if adb install --no-streaming -r app/build/outputs/apk/release/app-release.apk; then
-                INSTALL_OK="yes"
-                break
-              fi
-              adb devices -l
-              sleep 5
-            done
-            [ "$INSTALL_OK" = "yes" ] || { adb logcat -d -t 500; exit 1; }
-
-            adb logcat -c
-            adb shell monkey -p com.aistudio.applet.kpfcic 1
-            sleep 20
-            adb shell pidof com.aistudio.applet.kpfcic
-            RUNTIME_LOG="$RUNNER_TEMP/android-runtime-errors.log"
-            adb logcat -d -s AndroidRuntime:E > "$RUNTIME_LOG"
-            python3 -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]); data=p.read_text(errors="replace"); print(data); sys.exit(1 if "FATAL EXCEPTION" in data else 0)' "$RUNTIME_LOG"
+          script: >-
+            set -eu; adb wait-for-device; BOOTED=""; for attempt in $(seq 1 90); do BOOTED="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r' || true)"; if [ "$BOOTED" = "1" ]; then break; fi; sleep 2; done; if [ "$BOOTED" != "1" ]; then echo "Emulador não concluiu a inicialização."; adb devices -l; exit 1; fi; INSTALL_OK=""; for attempt in 1 2 3; do echo "Tentativa de instalação $attempt/3"; if adb install --no-streaming -r app/build/outputs/apk/release/app-release.apk; then INSTALL_OK="yes"; break; fi; adb devices -l; sleep 5; done; if [ "$INSTALL_OK" != "yes" ]; then adb logcat -d -t 500; exit 1; fi; adb logcat -c; adb shell monkey -p com.aistudio.applet.kpfcic 1; sleep 20; adb shell pidof com.aistudio.applet.kpfcic; RUNTIME_LOG="$RUNNER_TEMP/android-runtime-errors.log"; adb logcat -d -s AndroidRuntime:E > "$RUNTIME_LOG"; python3 -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]); data=p.read_text(errors="replace"); print(data); sys.exit(1 if "FATAL EXCEPTION" in data else 0)' "$RUNTIME_LOG"
 
       - name: Publicar relatórios de testes
         if: always()
