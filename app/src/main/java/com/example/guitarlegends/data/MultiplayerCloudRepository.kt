@@ -4,6 +4,7 @@ import com.example.guitarlegends.model.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
@@ -210,9 +211,14 @@ class MultiplayerCloudRepository(
         }
         val listener = firestore.collection("multiplayer_rooms")
             .document(normalized)
-            .addSnapshotListener { snap, error ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snap, error ->
                 if (error != null) {
                     close(error)
+                    return@addSnapshotListener
+                }
+                // Não propague ao jogo um estado que ainda existe somente no cache local.
+                // O outro participante só pode iniciar quando a alteração estiver confirmada.
+                if (snap?.metadata?.hasPendingWrites() == true) {
                     return@addSnapshotListener
                 }
                 val room = if (snap != null && snap.exists()) {
@@ -314,8 +320,7 @@ class MultiplayerCloudRepository(
         score: Int,
         combo: Int,
         rockMeter: Float,
-        starPowerActive: Boolean,
-        connectionState: ParticipantConnectionState = ParticipantConnectionState.ONLINE
+        starPowerActive: Boolean
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Usuário não autenticado."))
@@ -331,10 +336,7 @@ class MultiplayerCloudRepository(
                         "score" to score.coerceIn(0, 50_000_000),
                         "combo" to combo.coerceIn(0, 100_000),
                         "rockMeter" to rockMeter.toDouble().coerceIn(0.0, 1.0),
-                        "starPowerActive" to starPowerActive,
-                        "connectionState" to connectionState.name,
-                        "lastHeartbeatMs" to System.currentTimeMillis(),
-                        "updatedAt" to FieldValue.serverTimestamp()
+                        "starPowerActive" to starPowerActive
                     )
                 )
                 .await()
@@ -377,26 +379,52 @@ class MultiplayerCloudRepository(
         val path = "multiplayer_rooms/$normalized/strikes"
         return try {
             val roomRef = firestore.collection("multiplayer_rooms").document(normalized)
-            val room = roomRef.get().await().toObject(MultiplayerRoomCloud::class.java)
-                ?: throw IllegalStateException("Sala não encontrada.")
-            if (room.statusEnum != RoomStatus.PLAYING || !room.strikeEnabled ||
-                uid !in room.memberUids || targetUid !in room.memberUids
-            ) {
-                throw IllegalStateException("Strike indisponível: confirme o consentimento de todos os jogadores.")
-            }
-            val ref = roomRef.collection("strikes").document()
-            ref.set(
-                mapOf(
-                    "roomCode" to normalized,
-                    "attackerUid" to uid,
-                    "targetUid" to targetUid,
-                    "power" to power,
-                    "createdAtMs" to System.currentTimeMillis(),
-                    "status" to "PENDING",
-                    "resolvedAtMs" to 0L
+            val strikeId = firestore.runTransaction { tx ->
+                val roomSnap = tx.get(roomRef)
+                val room = roomSnap.toObject(MultiplayerRoomCloud::class.java)
+                    ?: throw IllegalStateException("Sala não encontrada.")
+
+                if (room.statusEnum != RoomStatus.PLAYING) {
+                    throw IllegalStateException("A partida ainda não está em andamento.")
+                }
+                if (!room.strikeEnabled) {
+                    throw IllegalStateException("O anfitrião não habilitou o Strike nesta sala.")
+                }
+                if (uid !in room.memberUids) {
+                    throw IllegalStateException("Seu jogador não consta mais na lista de participantes da sala.")
+                }
+                if (targetUid !in room.memberUids) {
+                    throw IllegalStateException("O jogador escolhido não consta mais na lista de participantes.")
+                }
+
+                // A decisão é conferida no servidor para todos os integrantes da sala.
+                // Assim, um cliente desatualizado não consegue enviar Strike sem consentimento.
+                val participantSnapshots = room.memberUids.distinct().map { memberUid ->
+                    tx.get(roomRef.collection("participants").document(memberUid))
+                }
+                if (participantSnapshots.size < 2 || participantSnapshots.any { !it.exists() }) {
+                    throw IllegalStateException("Não foi possível confirmar todos os participantes da sala.")
+                }
+                if (participantSnapshots.any { it.getBoolean("strikeConsent") != true }) {
+                    throw IllegalStateException("O Strike só pode ser usado quando todos os jogadores concordarem.")
+                }
+
+                val strikeRef = roomRef.collection("strikes").document()
+                tx.set(
+                    strikeRef,
+                    mapOf(
+                        "roomCode" to normalized,
+                        "attackerUid" to uid,
+                        "targetUid" to targetUid,
+                        "power" to power,
+                        "createdAtMs" to System.currentTimeMillis(),
+                        "status" to "PENDING",
+                        "resolvedAtMs" to 0L
+                    )
                 )
-            ).await()
-            Result.success(ref.id)
+                strikeRef.id
+            }.await()
+            Result.success(strikeId)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Result.failure(runCatching { handleFirestoreError(e, OperationType.WRITE, path, auth) }.exceptionOrNull() ?: e)
